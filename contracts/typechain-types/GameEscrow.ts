@@ -28,44 +28,67 @@ export declare namespace GameEscrow {
     player1: AddressLike;
     player2: AddressLike;
     betAmount: BigNumberish;
-    isActive: boolean;
+    state: BigNumberish;
     winner: AddressLike;
+    currentTurn: AddressLike;
+    moves: BigNumberish;
+    board: BigNumberish[];
   };
 
   export type MatchStructOutput = [
     player1: string,
     player2: string,
     betAmount: bigint,
-    isActive: boolean,
-    winner: string
+    state: bigint,
+    winner: string,
+    currentTurn: string,
+    moves: bigint,
+    board: bigint[]
   ] & {
     player1: string;
     player2: string;
     betAmount: bigint;
-    isActive: boolean;
+    state: bigint;
     winner: string;
+    currentTurn: string;
+    moves: bigint;
+    board: bigint[];
   };
 }
 
 export interface GameEscrowInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "BOARD_SIZE"
       | "createMatch"
+      | "getMatch"
       | "getMatches"
       | "joinMatch"
+      | "makeMove"
       | "matchCount"
       | "matches"
-      | "owner"
-      | "settleMatch"
   ): FunctionFragment;
 
   getEvent(
-    nameOrSignatureOrTopic: "MatchCreated" | "MatchSettled"
+    nameOrSignatureOrTopic:
+      | "MatchCreated"
+      | "MatchFinished"
+      | "MatchJoined"
+      | "MatchStarted"
+      | "MovePlayed"
   ): EventFragment;
 
   encodeFunctionData(
+    functionFragment: "BOARD_SIZE",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "createMatch",
-    values: [AddressLike]
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getMatch",
+    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "getMatches",
@@ -76,6 +99,10 @@ export interface GameEscrowInterface extends Interface {
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
+    functionFragment: "makeMove",
+    values: [BigNumberish, BigNumberish]
+  ): string;
+  encodeFunctionData(
     functionFragment: "matchCount",
     values?: undefined
   ): string;
@@ -83,44 +110,34 @@ export interface GameEscrowInterface extends Interface {
     functionFragment: "matches",
     values: [BigNumberish]
   ): string;
-  encodeFunctionData(functionFragment: "owner", values?: undefined): string;
-  encodeFunctionData(
-    functionFragment: "settleMatch",
-    values: [BigNumberish, AddressLike]
-  ): string;
 
+  decodeFunctionResult(functionFragment: "BOARD_SIZE", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "createMatch",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "getMatch", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "getMatches", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "joinMatch", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "makeMove", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "matchCount", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "matches", data: BytesLike): Result;
-  decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
-  decodeFunctionResult(
-    functionFragment: "settleMatch",
-    data: BytesLike
-  ): Result;
 }
 
 export namespace MatchCreatedEvent {
   export type InputTuple = [
     matchId: BigNumberish,
     player1: AddressLike,
-    player2: AddressLike,
     betAmount: BigNumberish
   ];
   export type OutputTuple = [
     matchId: bigint,
     player1: string,
-    player2: string,
     betAmount: bigint
   ];
   export interface OutputObject {
     matchId: bigint;
     player1: string;
-    player2: string;
     betAmount: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
@@ -129,12 +146,75 @@ export namespace MatchCreatedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace MatchSettledEvent {
-  export type InputTuple = [matchId: BigNumberish, winner: AddressLike];
-  export type OutputTuple = [matchId: bigint, winner: string];
+export namespace MatchFinishedEvent {
+  export type InputTuple = [
+    matchId: BigNumberish,
+    winner: AddressLike,
+    isDraw: boolean,
+    payout: BigNumberish
+  ];
+  export type OutputTuple = [
+    matchId: bigint,
+    winner: string,
+    isDraw: boolean,
+    payout: bigint
+  ];
   export interface OutputObject {
     matchId: bigint;
     winner: string;
+    isDraw: boolean;
+    payout: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace MatchJoinedEvent {
+  export type InputTuple = [matchId: BigNumberish, player2: AddressLike];
+  export type OutputTuple = [matchId: bigint, player2: string];
+  export interface OutputObject {
+    matchId: bigint;
+    player2: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace MatchStartedEvent {
+  export type InputTuple = [matchId: BigNumberish, currentTurn: AddressLike];
+  export type OutputTuple = [matchId: bigint, currentTurn: string];
+  export interface OutputObject {
+    matchId: bigint;
+    currentTurn: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace MovePlayedEvent {
+  export type InputTuple = [
+    matchId: BigNumberish,
+    player: AddressLike,
+    position: BigNumberish,
+    mark: BigNumberish
+  ];
+  export type OutputTuple = [
+    matchId: bigint,
+    player: string,
+    position: bigint,
+    mark: bigint
+  ];
+  export interface OutputObject {
+    matchId: bigint;
+    player: string;
+    position: bigint;
+    mark: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -185,34 +265,42 @@ export interface GameEscrow extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
-  createMatch: TypedContractMethod<[_player2: AddressLike], [void], "payable">;
+  BOARD_SIZE: TypedContractMethod<[], [bigint], "view">;
+
+  createMatch: TypedContractMethod<[], [bigint], "payable">;
+
+  getMatch: TypedContractMethod<
+    [matchId: BigNumberish],
+    [GameEscrow.MatchStructOutput],
+    "view"
+  >;
 
   getMatches: TypedContractMethod<[], [GameEscrow.MatchStructOutput[]], "view">;
 
-  joinMatch: TypedContractMethod<[_matchId: BigNumberish], [void], "payable">;
+  joinMatch: TypedContractMethod<[matchId: BigNumberish], [void], "payable">;
+
+  makeMove: TypedContractMethod<
+    [matchId: BigNumberish, position: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   matchCount: TypedContractMethod<[], [bigint], "view">;
 
   matches: TypedContractMethod<
     [arg0: BigNumberish],
     [
-      [string, string, bigint, boolean, string] & {
+      [string, string, bigint, bigint, string, string, bigint] & {
         player1: string;
         player2: string;
         betAmount: bigint;
-        isActive: boolean;
+        state: bigint;
         winner: string;
+        currentTurn: string;
+        moves: bigint;
       }
     ],
     "view"
-  >;
-
-  owner: TypedContractMethod<[], [string], "view">;
-
-  settleMatch: TypedContractMethod<
-    [_matchId: BigNumberish, _winner: AddressLike],
-    [void],
-    "nonpayable"
   >;
 
   getFunction<T extends ContractMethod = ContractMethod>(
@@ -220,14 +308,31 @@ export interface GameEscrow extends BaseContract {
   ): T;
 
   getFunction(
+    nameOrSignature: "BOARD_SIZE"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "createMatch"
-  ): TypedContractMethod<[_player2: AddressLike], [void], "payable">;
+  ): TypedContractMethod<[], [bigint], "payable">;
+  getFunction(
+    nameOrSignature: "getMatch"
+  ): TypedContractMethod<
+    [matchId: BigNumberish],
+    [GameEscrow.MatchStructOutput],
+    "view"
+  >;
   getFunction(
     nameOrSignature: "getMatches"
   ): TypedContractMethod<[], [GameEscrow.MatchStructOutput[]], "view">;
   getFunction(
     nameOrSignature: "joinMatch"
-  ): TypedContractMethod<[_matchId: BigNumberish], [void], "payable">;
+  ): TypedContractMethod<[matchId: BigNumberish], [void], "payable">;
+  getFunction(
+    nameOrSignature: "makeMove"
+  ): TypedContractMethod<
+    [matchId: BigNumberish, position: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
   getFunction(
     nameOrSignature: "matchCount"
   ): TypedContractMethod<[], [bigint], "view">;
@@ -236,25 +341,17 @@ export interface GameEscrow extends BaseContract {
   ): TypedContractMethod<
     [arg0: BigNumberish],
     [
-      [string, string, bigint, boolean, string] & {
+      [string, string, bigint, bigint, string, string, bigint] & {
         player1: string;
         player2: string;
         betAmount: bigint;
-        isActive: boolean;
+        state: bigint;
         winner: string;
+        currentTurn: string;
+        moves: bigint;
       }
     ],
     "view"
-  >;
-  getFunction(
-    nameOrSignature: "owner"
-  ): TypedContractMethod<[], [string], "view">;
-  getFunction(
-    nameOrSignature: "settleMatch"
-  ): TypedContractMethod<
-    [_matchId: BigNumberish, _winner: AddressLike],
-    [void],
-    "nonpayable"
   >;
 
   getEvent(
@@ -265,15 +362,36 @@ export interface GameEscrow extends BaseContract {
     MatchCreatedEvent.OutputObject
   >;
   getEvent(
-    key: "MatchSettled"
+    key: "MatchFinished"
   ): TypedContractEvent<
-    MatchSettledEvent.InputTuple,
-    MatchSettledEvent.OutputTuple,
-    MatchSettledEvent.OutputObject
+    MatchFinishedEvent.InputTuple,
+    MatchFinishedEvent.OutputTuple,
+    MatchFinishedEvent.OutputObject
+  >;
+  getEvent(
+    key: "MatchJoined"
+  ): TypedContractEvent<
+    MatchJoinedEvent.InputTuple,
+    MatchJoinedEvent.OutputTuple,
+    MatchJoinedEvent.OutputObject
+  >;
+  getEvent(
+    key: "MatchStarted"
+  ): TypedContractEvent<
+    MatchStartedEvent.InputTuple,
+    MatchStartedEvent.OutputTuple,
+    MatchStartedEvent.OutputObject
+  >;
+  getEvent(
+    key: "MovePlayed"
+  ): TypedContractEvent<
+    MovePlayedEvent.InputTuple,
+    MovePlayedEvent.OutputTuple,
+    MovePlayedEvent.OutputObject
   >;
 
   filters: {
-    "MatchCreated(uint256,address,address,uint256)": TypedContractEvent<
+    "MatchCreated(uint256,address,uint256)": TypedContractEvent<
       MatchCreatedEvent.InputTuple,
       MatchCreatedEvent.OutputTuple,
       MatchCreatedEvent.OutputObject
@@ -284,15 +402,48 @@ export interface GameEscrow extends BaseContract {
       MatchCreatedEvent.OutputObject
     >;
 
-    "MatchSettled(uint256,address)": TypedContractEvent<
-      MatchSettledEvent.InputTuple,
-      MatchSettledEvent.OutputTuple,
-      MatchSettledEvent.OutputObject
+    "MatchFinished(uint256,address,bool,uint256)": TypedContractEvent<
+      MatchFinishedEvent.InputTuple,
+      MatchFinishedEvent.OutputTuple,
+      MatchFinishedEvent.OutputObject
     >;
-    MatchSettled: TypedContractEvent<
-      MatchSettledEvent.InputTuple,
-      MatchSettledEvent.OutputTuple,
-      MatchSettledEvent.OutputObject
+    MatchFinished: TypedContractEvent<
+      MatchFinishedEvent.InputTuple,
+      MatchFinishedEvent.OutputTuple,
+      MatchFinishedEvent.OutputObject
+    >;
+
+    "MatchJoined(uint256,address)": TypedContractEvent<
+      MatchJoinedEvent.InputTuple,
+      MatchJoinedEvent.OutputTuple,
+      MatchJoinedEvent.OutputObject
+    >;
+    MatchJoined: TypedContractEvent<
+      MatchJoinedEvent.InputTuple,
+      MatchJoinedEvent.OutputTuple,
+      MatchJoinedEvent.OutputObject
+    >;
+
+    "MatchStarted(uint256,address)": TypedContractEvent<
+      MatchStartedEvent.InputTuple,
+      MatchStartedEvent.OutputTuple,
+      MatchStartedEvent.OutputObject
+    >;
+    MatchStarted: TypedContractEvent<
+      MatchStartedEvent.InputTuple,
+      MatchStartedEvent.OutputTuple,
+      MatchStartedEvent.OutputObject
+    >;
+
+    "MovePlayed(uint256,address,uint8,uint8)": TypedContractEvent<
+      MovePlayedEvent.InputTuple,
+      MovePlayedEvent.OutputTuple,
+      MovePlayedEvent.OutputObject
+    >;
+    MovePlayed: TypedContractEvent<
+      MovePlayedEvent.InputTuple,
+      MovePlayedEvent.OutputTuple,
+      MovePlayedEvent.OutputObject
     >;
   };
 }

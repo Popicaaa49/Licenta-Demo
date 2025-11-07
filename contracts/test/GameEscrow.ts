@@ -1,30 +1,142 @@
-import hre from "hardhat";
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
+import hre from "hardhat";
 
 const { ethers } = hre;
 
-describe("GameEscrow", function () {
-  it("should allow two players to create and settle a match", async function () {
-    const [admin, player1, player2] = await ethers.getSigners();
-
+describe("GameEscrow TicTacToe", function () {
+  async function deployFixture() {
+    const [player1, player2, outsider] = await ethers.getSigners();
     const GameEscrow = await ethers.getContractFactory("GameEscrow");
     const escrow = await GameEscrow.deploy();
     await escrow.waitForDeployment();
 
-    // player1 creează meciul
-    await escrow.connect(player1).createMatch(player2.address, {
-      value: ethers.parseEther("1"),
-    });
+    return { escrow, player1, player2, outsider };
+  }
 
-    // player2 se alătură
-    await escrow.connect(player2).joinMatch(0, { value: ethers.parseEther("1") });
+  const bet = ethers.parseEther("0.1");
 
-    // adminul (owner-ul) stabilește câștigătorul
-    await escrow.connect(admin).settleMatch(0, player1.address);
+  it("creates a match, accepts an opponent, and starts the game", async function () {
+    const { escrow, player1, player2 } = await loadFixture(deployFixture);
 
-    // verificăm rezultatul
-    const matchData = await escrow.matches(0);
-    expect(matchData.winner).to.equal(player1.address);
-    expect(matchData.isActive).to.equal(false);
+    await expect(
+      escrow.connect(player1).createMatch({ value: bet })
+    ).to.emit(escrow, "MatchCreated");
+
+    const created = await escrow.getMatch(0);
+    expect(created.player1).to.equal(player1.address);
+    expect(created.player2).to.equal(ethers.ZeroAddress);
+    expect(created.betAmount).to.equal(bet);
+    expect(created.state).to.equal(0);
+
+    await expect(
+      escrow.connect(player2).joinMatch(0, { value: bet })
+    )
+      .to.emit(escrow, "MatchJoined")
+      .withArgs(0, player2.address)
+      .and.to.emit(escrow, "MatchStarted");
+
+    const joined = await escrow.getMatch(0);
+    expect(joined.player2).to.equal(player2.address);
+    expect(joined.state).to.equal(1);
+    expect(joined.currentTurn).to.equal(player1.address);
+  });
+
+  it("lets player1 win and pays the entire pot", async function () {
+    const { escrow, player1, player2 } = await loadFixture(deployFixture);
+
+    await escrow.connect(player1).createMatch({ value: bet });
+    await escrow.connect(player2).joinMatch(0, { value: bet });
+
+    expect(await ethers.provider.getBalance(escrow.target)).to.equal(bet * 2n);
+
+    await escrow.connect(player1).makeMove(0, 0);
+    await escrow.connect(player2).makeMove(0, 1);
+    await escrow.connect(player1).makeMove(0, 4);
+    await escrow.connect(player2).makeMove(0, 2);
+    const finishingTx = await escrow.connect(player1).makeMove(0, 8);
+
+    await expect(finishingTx)
+      .to.emit(escrow, "MatchFinished")
+      .withArgs(0, player1.address, false, bet * 2n);
+
+    const finished = await escrow.getMatch(0);
+    expect(finished.state).to.equal(2);
+    expect(finished.winner).to.equal(player1.address);
+    expect(finished.betAmount).to.equal(bet);
+    expect(finished.currentTurn).to.equal(ethers.ZeroAddress);
+    expect(await ethers.provider.getBalance(escrow.target)).to.equal(0n);
+  });
+
+  it("handles a draw and refunds both players", async function () {
+    const { escrow, player1, player2 } = await loadFixture(deployFixture);
+
+    await escrow.connect(player1).createMatch({ value: bet });
+    await escrow.connect(player2).joinMatch(0, { value: bet });
+
+    const contractAddress = escrow.target;
+
+    const sequence = [
+      { player: player1, cell: 0 },
+      { player: player2, cell: 4 },
+      { player: player1, cell: 2 },
+      { player: player2, cell: 6 },
+      { player: player1, cell: 7 },
+      { player: player2, cell: 1 },
+      { player: player1, cell: 5 },
+      { player: player2, cell: 8 },
+      { player: player1, cell: 3 },
+    ];
+
+    for (const move of sequence) {
+      await escrow.connect(move.player).makeMove(0, move.cell);
+    }
+
+    const matchData = await escrow.getMatch(0);
+    expect(matchData.state).to.equal(2);
+    expect(matchData.winner).to.equal(ethers.ZeroAddress);
+    expect(matchData.betAmount).to.equal(bet);
+    expect(await ethers.provider.getBalance(contractAddress)).to.equal(0n);
+  });
+
+  it("enforces turn order, bet amount, and move validity", async function () {
+    const { escrow, player1, player2, outsider } = await loadFixture(deployFixture);
+
+    await expect(escrow.connect(player1).createMatch({ value: 0n })).to.be.revertedWithCustomError(
+      escrow,
+      "InvalidBet"
+    );
+
+    await escrow.connect(player1).createMatch({ value: bet });
+
+    await expect(
+      escrow.connect(player1).joinMatch(0, { value: bet })
+    ).to.be.revertedWithCustomError(escrow, "CreatorCannotJoin");
+
+    await expect(
+      escrow.connect(player2).joinMatch(0, { value: bet / 2n })
+    ).to.be.revertedWithCustomError(escrow, "IncorrectBetAmount");
+
+    await escrow.connect(player2).joinMatch(0, { value: bet });
+
+    await expect(
+      escrow.connect(outsider).makeMove(0, 0)
+    ).to.be.revertedWithCustomError(escrow, "NotParticipant");
+
+    await escrow.connect(player1).makeMove(0, 0);
+
+    await expect(
+      escrow.connect(player1).makeMove(0, 1)
+    ).to.be.revertedWithCustomError(escrow, "NotPlayerTurn");
+
+    await expect(
+      escrow.connect(player2).makeMove(0, 0)
+    ).to.be.revertedWithCustomError(escrow, "InvalidMove");
+
+    await escrow.connect(player2).makeMove(0, 4);
+
+    await expect(
+      escrow.connect(player1).makeMove(0, 9)
+    ).to.be.revertedWithCustomError(escrow, "InvalidMove");
   });
 });

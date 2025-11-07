@@ -1,13 +1,23 @@
 import { ethers } from "ethers";
 import GameEscrow from "./contracts/GameEscrow.json";
-
-const contractAddress = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"; // va fi completat după deploy
+import addresses from "./contracts/contractAddress.json";
 
 export const getContract = async () => {
   if (!window.ethereum) throw new Error("MetaMask not detected");
 
   const provider = new ethers.BrowserProvider(window.ethereum);
   const signer = await provider.getSigner();
+  const network = await provider.getNetwork();
+
+  const addressBook = addresses as Record<string, string>;
+  const chainKey = network.chainId.toString();
+  const contractAddress = addressBook[chainKey];
+
+  if (!contractAddress) {
+    throw new Error(
+      `Contract address not found for chain ${chainKey}. Deploy GameEscrow and rerun the frontend.`
+    );
+  }
 
   const contract = new ethers.Contract(contractAddress, GameEscrow.abi, signer);
   return { contract, signer, provider };
