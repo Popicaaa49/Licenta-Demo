@@ -26,6 +26,11 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
   const [joiningMatchId, setJoiningMatchId] = useState<number | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
 
+  const activeMatches = useMemo(
+    () => matches.filter((m) => m.state !== MatchState.Finished),
+    [matches]
+  );
+
   const selectedMatch = useMemo(
     () => matches.find((m) => m.id === selectedMatchId) ?? null,
     [matches, selectedMatchId]
@@ -79,6 +84,14 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
   useEffect(() => {
     fetchMatches();
   }, [fetchMatches]);
+
+  useEffect(() => {
+    if (selectedMatchId === null) return;
+    const match = matches.find((m) => m.id === selectedMatchId);
+    if (!match || match.state === MatchState.Finished) {
+      setSelectedMatchId(null);
+    }
+  }, [matches, selectedMatchId]);
 
   useEffect(() => {
     if (!walletConnected) return;
@@ -222,12 +235,12 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
 
       {loading ? (
         <div className="skeleton skeleton--table">
-          <span>Se încarcă meciurile...</span>
+          <span>Se incarca meciurile...</span>
         </div>
-      ) : matches.length === 0 ? (
+      ) : activeMatches.length === 0 ? (
         <div className="empty-state">
-          <h3>Nu există încă meciuri</h3>
-          <p>Fii primul care creează un meci și invită-ți prietenii la un Tic-Tac-Toe.</p>
+          <h3>Nu exista meciuri active</h3>
+          <p>Fii primul care creeaza un meci si invita-ti prietenii la un Tic-Tac-Toe.</p>
         </div>
       ) : (
         <>
@@ -246,7 +259,7 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
                 </tr>
               </thead>
               <tbody>
-                {matches.map((m) => {
+                {activeMatches.map((m) => {
                   const awaitingOpponent =
                     m.state === MatchState.WaitingOpponent &&
                     m.player2 === ZERO_ADDRESS;

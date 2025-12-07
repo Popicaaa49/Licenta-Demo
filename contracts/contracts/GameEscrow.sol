@@ -19,10 +19,19 @@ contract GameEscrow {
         uint8[9] board;
     }
 
+    struct PlayerRating {
+        int256 elo;
+        bool initialized;
+    }
+
     uint256 public constant BOARD_SIZE = 9;
+    int256 public constant DEFAULT_ELO = 1000;
+    int256 public constant ELO_DELTA = 25;
 
     uint256 public matchCount;
     mapping(uint256 => Match) public matches;
+    mapping(address => uint256[]) private playerMatchIds;
+    mapping(address => PlayerRating) private playerRatings;
 
     event MatchCreated(uint256 indexed matchId, address indexed player1, uint256 betAmount);
     event MatchJoined(uint256 indexed matchId, address indexed player2);
@@ -34,6 +43,7 @@ contract GameEscrow {
         uint8 mark
     );
     event MatchFinished(uint256 indexed matchId, address winner, bool isDraw, uint256 payout);
+    event EloUpdated(address indexed player, int256 newElo);
 
     error InvalidBet();
     error MatchNotFound();
@@ -69,6 +79,8 @@ contract GameEscrow {
 
         matchCount++;
 
+        playerMatchIds[msg.sender].push(matchId);
+
         emit MatchCreated(matchId, msg.sender, msg.value);
     }
 
@@ -84,6 +96,8 @@ contract GameEscrow {
         m.player2 = msg.sender;
         m.state = MatchState.InProgress;
         m.currentTurn = m.player1;
+
+        playerMatchIds[msg.sender].push(matchId);
 
         emit MatchJoined(matchId, msg.sender);
         emit MatchStarted(matchId, m.currentTurn);
@@ -133,6 +147,36 @@ contract GameEscrow {
         return m;
     }
 
+    function getPlayerMatchIds(address player) external view returns (uint256[] memory) {
+        return playerMatchIds[player];
+    }
+
+    function getPlayerHistory(address player)
+        external
+        view
+        returns (Match[] memory playerMatches, uint256[] memory matchIds)
+    {
+        uint256[] storage ids = playerMatchIds[player];
+        uint256 length = ids.length;
+
+        matchIds = new uint256[](length);
+        playerMatches = new Match[](length);
+
+        for (uint256 i = 0; i < length; i++) {
+            uint256 id = ids[i];
+            matchIds[i] = id;
+            playerMatches[i] = matches[id];
+        }
+    }
+
+    function getPlayerElo(address player) external view returns (int256) {
+        PlayerRating memory profile = playerRatings[player];
+        if (!profile.initialized) {
+            return DEFAULT_ELO;
+        }
+        return profile.elo;
+    }
+
     // ---- Internal helpers ----
 
     function _hasWinningLine(uint8[9] storage board, uint8 mark) private view returns (bool) {
@@ -168,6 +212,7 @@ contract GameEscrow {
         m.currentTurn = address(0);
 
         uint256 payout = m.betAmount * 2;
+        _updateEloForOutcome(m.player1, m.player2, winner);
 
         _safeTransfer(winner, payout);
 
@@ -181,6 +226,9 @@ contract GameEscrow {
 
         uint256 refundAmount = m.betAmount;
 
+        _ensurePlayerRating(m.player1);
+        _ensurePlayerRating(m.player2);
+
         _safeTransfer(m.player1, refundAmount);
         _safeTransfer(m.player2, refundAmount);
 
@@ -190,5 +238,34 @@ contract GameEscrow {
     function _safeTransfer(address to, uint256 amount) private {
         (bool ok, ) = payable(to).call{value: amount}("");
         require(ok, "Transfer failed");
+    }
+
+    function _updateEloForOutcome(
+        address player1,
+        address player2,
+        address winner
+    ) private {
+        if (player1 == address(0) || player2 == address(0) || winner == address(0)) {
+            return;
+        }
+
+        address loser = winner == player1 ? player2 : player1;
+
+        PlayerRating storage winnerRating = _ensurePlayerRating(winner);
+        PlayerRating storage loserRating = _ensurePlayerRating(loser);
+
+        winnerRating.elo += ELO_DELTA;
+        loserRating.elo -= ELO_DELTA;
+
+        emit EloUpdated(winner, winnerRating.elo);
+        emit EloUpdated(loser, loserRating.elo);
+    }
+
+    function _ensurePlayerRating(address player) private returns (PlayerRating storage profile) {
+        profile = playerRatings[player];
+        if (!profile.initialized) {
+            profile.elo = DEFAULT_ELO;
+            profile.initialized = true;
+        }
     }
 }

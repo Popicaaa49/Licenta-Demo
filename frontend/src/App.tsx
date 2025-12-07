@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import WalletConnect from "./components/WalletConnect";
 import GameInterface from "./components/GameInterface";
 import MatchesList from "./components/MatchesList";
+import MatchHistory from "./components/MatchHistory";
+import AccountStats from "./components/AccountStats";
+import { usePlayerHistory } from "./hooks/usePlayerHistory";
 import "./App.css";
 
 const resolveChainLabel = (chainIdHex?: string | null) => {
@@ -27,8 +30,13 @@ const App: React.FC = () => {
   const [account, setAccount] = useState<string | null>(null);
   const [chainIdHex, setChainIdHex] = useState<string>("");
   const [walletReady, setWalletReady] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const networkLabel = useMemo(() => resolveChainLabel(chainIdHex), [chainIdHex]);
+  const { history, loading: historyLoading, error: historyError, stats } = usePlayerHistory(
+    account,
+    walletReady
+  );
 
   useEffect(() => {
     const ethereum = window.ethereum;
@@ -77,6 +85,12 @@ const App: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!walletReady) {
+      setStatsOpen(false);
+    }
+  }, [walletReady]);
+
   return (
     <div className="app-shell">
       <div className="app-container">
@@ -87,22 +101,33 @@ const App: React.FC = () => {
               Demo Licenta in continua actualizare
             </p>
           </div>
-          <WalletConnect
-            account={account}
-            networkLabel={networkLabel}
-            onConnect={(connectedAccount, detectedChain) => {
-              setAccount(connectedAccount);
-              setWalletReady(true);
-              if (detectedChain) {
-                setChainIdHex(detectedChain);
-              }
-            }}
-            onDisconnect={() => {
-              setAccount(null);
-              setWalletReady(false);
-              setChainIdHex("");
-            }}
-          />
+          <div className="header-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setStatsOpen(true)}
+              disabled={!walletReady}
+            >
+              Statistici
+            </button>
+            <WalletConnect
+              account={account}
+              networkLabel={networkLabel}
+              onConnect={(connectedAccount, detectedChain) => {
+                setAccount(connectedAccount);
+                setWalletReady(true);
+                if (detectedChain) {
+                  setChainIdHex(detectedChain);
+                }
+              }}
+              onDisconnect={() => {
+                setAccount(null);
+                setWalletReady(false);
+                setChainIdHex("");
+                setStatsOpen(false);
+              }}
+            />
+          </div>
         </header>
 
         <main className="app-main">
@@ -113,8 +138,43 @@ const App: React.FC = () => {
           <section className="panel panel--matches">
             <MatchesList walletConnected={walletReady} account={account} />
           </section>
+
+          <section className="panel panel--history">
+            <MatchHistory
+              walletConnected={walletReady}
+              account={account}
+              history={history}
+              loading={historyLoading}
+              error={historyError}
+            />
+          </section>
         </main>
       </div>
+
+      {statsOpen && (
+        <div className="stats-overlay" role="dialog" aria-modal="true">
+          <div className="stats-modal">
+            <div className="stats-modal-header">
+              <div>
+                <h3>Statistici cont</h3>
+                <p>Analiza rezultatelor pentru adresa curenta.</p>
+              </div>
+              <button type="button" className="ghost-button" onClick={() => setStatsOpen(false)}>
+                Inchide
+              </button>
+            </div>
+
+            <AccountStats
+              walletConnected={walletReady}
+              account={account}
+              loading={historyLoading}
+              error={historyError}
+              stats={stats}
+              history={history}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

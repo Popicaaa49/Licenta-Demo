@@ -60,9 +60,14 @@ export interface GameEscrowInterface extends Interface {
   getFunction(
     nameOrSignature:
       | "BOARD_SIZE"
+      | "DEFAULT_ELO"
+      | "ELO_DELTA"
       | "createMatch"
       | "getMatch"
       | "getMatches"
+      | "getPlayerElo"
+      | "getPlayerHistory"
+      | "getPlayerMatchIds"
       | "joinMatch"
       | "makeMove"
       | "matchCount"
@@ -71,6 +76,7 @@ export interface GameEscrowInterface extends Interface {
 
   getEvent(
     nameOrSignatureOrTopic:
+      | "EloUpdated"
       | "MatchCreated"
       | "MatchFinished"
       | "MatchJoined"
@@ -83,6 +89,11 @@ export interface GameEscrowInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "DEFAULT_ELO",
+    values?: undefined
+  ): string;
+  encodeFunctionData(functionFragment: "ELO_DELTA", values?: undefined): string;
+  encodeFunctionData(
     functionFragment: "createMatch",
     values?: undefined
   ): string;
@@ -93,6 +104,18 @@ export interface GameEscrowInterface extends Interface {
   encodeFunctionData(
     functionFragment: "getMatches",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getPlayerElo",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getPlayerHistory",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getPlayerMatchIds",
+    values: [AddressLike]
   ): string;
   encodeFunctionData(
     functionFragment: "joinMatch",
@@ -113,15 +136,45 @@ export interface GameEscrowInterface extends Interface {
 
   decodeFunctionResult(functionFragment: "BOARD_SIZE", data: BytesLike): Result;
   decodeFunctionResult(
+    functionFragment: "DEFAULT_ELO",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(functionFragment: "ELO_DELTA", data: BytesLike): Result;
+  decodeFunctionResult(
     functionFragment: "createMatch",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "getMatch", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "getMatches", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "getPlayerElo",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "getPlayerHistory",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "getPlayerMatchIds",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "joinMatch", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "makeMove", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "matchCount", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "matches", data: BytesLike): Result;
+}
+
+export namespace EloUpdatedEvent {
+  export type InputTuple = [player: AddressLike, newElo: BigNumberish];
+  export type OutputTuple = [player: string, newElo: bigint];
+  export interface OutputObject {
+    player: string;
+    newElo: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
 }
 
 export namespace MatchCreatedEvent {
@@ -267,6 +320,10 @@ export interface GameEscrow extends BaseContract {
 
   BOARD_SIZE: TypedContractMethod<[], [bigint], "view">;
 
+  DEFAULT_ELO: TypedContractMethod<[], [bigint], "view">;
+
+  ELO_DELTA: TypedContractMethod<[], [bigint], "view">;
+
   createMatch: TypedContractMethod<[], [bigint], "payable">;
 
   getMatch: TypedContractMethod<
@@ -276,6 +333,25 @@ export interface GameEscrow extends BaseContract {
   >;
 
   getMatches: TypedContractMethod<[], [GameEscrow.MatchStructOutput[]], "view">;
+
+  getPlayerElo: TypedContractMethod<[player: AddressLike], [bigint], "view">;
+
+  getPlayerHistory: TypedContractMethod<
+    [player: AddressLike],
+    [
+      [GameEscrow.MatchStructOutput[], bigint[]] & {
+        playerMatches: GameEscrow.MatchStructOutput[];
+        matchIds: bigint[];
+      }
+    ],
+    "view"
+  >;
+
+  getPlayerMatchIds: TypedContractMethod<
+    [player: AddressLike],
+    [bigint[]],
+    "view"
+  >;
 
   joinMatch: TypedContractMethod<[matchId: BigNumberish], [void], "payable">;
 
@@ -311,6 +387,12 @@ export interface GameEscrow extends BaseContract {
     nameOrSignature: "BOARD_SIZE"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
+    nameOrSignature: "DEFAULT_ELO"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "ELO_DELTA"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "createMatch"
   ): TypedContractMethod<[], [bigint], "payable">;
   getFunction(
@@ -323,6 +405,24 @@ export interface GameEscrow extends BaseContract {
   getFunction(
     nameOrSignature: "getMatches"
   ): TypedContractMethod<[], [GameEscrow.MatchStructOutput[]], "view">;
+  getFunction(
+    nameOrSignature: "getPlayerElo"
+  ): TypedContractMethod<[player: AddressLike], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "getPlayerHistory"
+  ): TypedContractMethod<
+    [player: AddressLike],
+    [
+      [GameEscrow.MatchStructOutput[], bigint[]] & {
+        playerMatches: GameEscrow.MatchStructOutput[];
+        matchIds: bigint[];
+      }
+    ],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "getPlayerMatchIds"
+  ): TypedContractMethod<[player: AddressLike], [bigint[]], "view">;
   getFunction(
     nameOrSignature: "joinMatch"
   ): TypedContractMethod<[matchId: BigNumberish], [void], "payable">;
@@ -354,6 +454,13 @@ export interface GameEscrow extends BaseContract {
     "view"
   >;
 
+  getEvent(
+    key: "EloUpdated"
+  ): TypedContractEvent<
+    EloUpdatedEvent.InputTuple,
+    EloUpdatedEvent.OutputTuple,
+    EloUpdatedEvent.OutputObject
+  >;
   getEvent(
     key: "MatchCreated"
   ): TypedContractEvent<
@@ -391,6 +498,17 @@ export interface GameEscrow extends BaseContract {
   >;
 
   filters: {
+    "EloUpdated(address,int256)": TypedContractEvent<
+      EloUpdatedEvent.InputTuple,
+      EloUpdatedEvent.OutputTuple,
+      EloUpdatedEvent.OutputObject
+    >;
+    EloUpdated: TypedContractEvent<
+      EloUpdatedEvent.InputTuple,
+      EloUpdatedEvent.OutputTuple,
+      EloUpdatedEvent.OutputObject
+    >;
+
     "MatchCreated(uint256,address,uint256)": TypedContractEvent<
       MatchCreatedEvent.InputTuple,
       MatchCreatedEvent.OutputTuple,
