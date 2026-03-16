@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ethers } from "ethers";
-import { getContract } from "../web3Config";
+import { getContract, getReadGameContract } from "../web3Config";
 import TicTacToeBoard from "./TicTacToeBoard";
 import {
   Match,
@@ -10,6 +11,16 @@ import {
 } from "../types/match";
 
 type StatusPayload = { type: "success" | "error" | "warning"; message: string };
+type ToastKind = "info" | "success" | "warning";
+
+type ToastItem = {
+  id: string;
+  kind: ToastKind;
+  title: string;
+  message: string;
+  actionLabel?: string;
+  actionMatchId?: number;
+};
 
 interface MatchesListProps {
   walletConnected: boolean;
@@ -25,6 +36,31 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
   const [actionMessage, setActionMessage] = useState<StatusPayload | null>(null);
   const [joiningMatchId, setJoiningMatchId] = useState<number | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("unsupported");
+  const [modalPosition, setModalPosition] = useState<{ x: number; y: number } | null>(
+    null
+  );
+  const [isDragging, setIsDragging] = useState(false);
+
+  const lastTurnByMatchRef = useRef<Record<number, string>>({});
+  const lastActiveMatchIdRef = useRef<number | null>(null);
+  const dismissedActiveMatchIdRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const hasLoadedOnceRef = useRef(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+  const didDragRef = useRef(false);
+
+  const accountLower = useMemo(() => account?.toLowerCase() ?? null, [account]);
 
   const activeMatches = useMemo(
     () => matches.filter((m) => m.state !== MatchState.Finished),
@@ -35,17 +71,286 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
     () => matches.find((m) => m.id === selectedMatchId) ?? null,
     [matches, selectedMatchId]
   );
+  const isModalOpen = selectedMatchId !== null;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      return;
+    }
+
+    setNotificationPermission(Notification.permission);
+  }, []);
+
+  const pushToast = useCallback((toast: ToastItem) => {
+    setToasts((prev) => {
+      if (prev.some((item) => item.id === toast.id)) {
+        return prev;
+      }
+      return [toast, ...prev].slice(0, 3);
+    });
+  }, []);
+
+  const dismissToast = useCallback((toastId: string) => {
+    setToasts((prev) => prev.filter((item) => item.id !== toastId));
+  }, []);
+
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+    } catch (err) {
+      console.warn("Unable to request notification permission", err);
+    }
+  }, []);
+
+  const playTurnSound = useCallback(() => {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (
+          window as Window & { webkitAudioContext?: typeof AudioContext }
+        ).webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      const context =
+        audioContextRef.current ?? new AudioContextClass();
+      audioContextRef.current = context;
+
+      if (context.state === "suspended") {
+        void context.resume();
+      }
+
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "triangle";
+      oscillator.frequency.value = 720;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.35);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.36);
+    } catch (err) {
+      console.warn("Unable to play turn sound", err);
+    }
+  }, []);
+
+  const notifyActiveMatch = useCallback(
+    (match: Match) => {
+      if (dismissedActiveMatchIdRef.current === match.id) return;
+      pushToast({
+        id: `active-${match.id}`,
+        kind: "info",
+        title: "Meci activ gasit",
+        message: `Ai un meci in desfasurare (#${match.id}).`,
+        actionLabel: "View",
+        actionMatchId: match.id,
+      });
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "granted") {
+          const notification = new Notification("Meciul a inceput", {
+            body: `Meciul #${match.id} este activ. Apasa View in aplicatie.`,
+            icon: "/logo192.png",
+          });
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+          };
+        }
+      }
+    },
+    [pushToast]
+  );
+
+  const notifyYourTurn = useCallback(
+    (match: Match) => {
+      pushToast({
+        id: `turn-${match.id}-${match.moves}`,
+        kind: "success",
+        title: "Este randul tau",
+        message: `Meciul #${match.id} asteapta mutarea ta.`,
+        actionLabel: "View",
+        actionMatchId: match.id,
+      });
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "granted") {
+          const notification = new Notification("Este randul tau", {
+            body: `Meciul #${match.id} asteapta mutarea ta.`,
+            icon: "/logo192.png",
+          });
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+          };
+        }
+      }
+      playTurnSound();
+    },
+    [pushToast, playTurnSound]
+  );
+
+  const clampModalPosition = useCallback((x: number, y: number) => {
+    const modal = modalRef.current;
+    if (!modal) {
+      return { x, y };
+    }
+
+    const rect = modal.getBoundingClientRect();
+    const padding = 16;
+    const maxX = Math.max(padding, window.innerWidth - rect.width - padding);
+    const maxY = Math.max(padding, window.innerHeight - rect.height - padding);
+
+    return {
+      x: Math.min(Math.max(x, padding), maxX),
+      y: Math.min(Math.max(y, padding), maxY),
+    };
+  }, []);
+
+  const startDrag = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const modal = modalRef.current;
+    if (!modal) return;
+
+    const rect = modal.getBoundingClientRect();
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: rect.left,
+      originY: rect.top,
+      moved: false,
+    };
+    didDragRef.current = false;
+    setModalPosition((prev) => prev ?? { x: rect.left, y: rect.top });
+    setIsDragging(true);
+  }, []);
+
+  const openMatch = useCallback((matchId: number) => {
+    dismissedActiveMatchIdRef.current = matchId;
+    setSelectedMatchId(matchId);
+    setModalPosition(null);
+    setIsDragging(false);
+    dragStateRef.current = null;
+    didDragRef.current = false;
+    setToasts((prev) => prev.filter((item) => item.actionMatchId !== matchId));
+  }, []);
+
+  const closeMatch = useCallback(() => {
+    setSelectedMatchId(null);
+    setModalPosition(null);
+    setIsDragging(false);
+    dragStateRef.current = null;
+    didDragRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    if (typeof document === "undefined") return;
+    const originalOverflow = document.body.style.overflow;
+    const originalPadding = document.body.style.paddingRight;
+    const scrollBarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    if (scrollBarWidth > 0) {
+      document.body.style.paddingRight = `${scrollBarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.paddingRight = originalPadding;
+    };
+  }, [isModalOpen]);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    if (!modalRef.current) return;
+    if (!modalPosition) {
+      const rect = modalRef.current.getBoundingClientRect();
+      const centerX = (window.innerWidth - rect.width) / 2;
+      const centerY = (window.innerHeight - rect.height) / 2;
+      setModalPosition(clampModalPosition(centerX, centerY));
+      return;
+    }
+
+    const clamped = clampModalPosition(modalPosition.x, modalPosition.y);
+    if (clamped.x !== modalPosition.x || clamped.y !== modalPosition.y) {
+      setModalPosition(clamped);
+    }
+  }, [clampModalPosition, isModalOpen, modalPosition]);
+
+  useEffect(() => {
+    const modal = modalRef.current;
+    if (!modal || !isModalOpen) return;
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      if (!modalPosition) return;
+      const rect = modal.getBoundingClientRect();
+      const clamped = clampModalPosition(rect.left, rect.top);
+      if (clamped.x !== rect.left || clamped.y !== rect.top) {
+        setModalPosition(clamped);
+      }
+    });
+
+    observer.observe(modal);
+
+    return () => observer.disconnect();
+  }, [clampModalPosition, isModalOpen, modalPosition]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMove = (event: MouseEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState) return;
+
+      const deltaX = event.clientX - dragState.startX;
+      const deltaY = event.clientY - dragState.startY;
+
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+        dragState.moved = true;
+        didDragRef.current = true;
+      }
+
+      const nextX = dragState.originX + deltaX;
+      const nextY = dragState.originY + deltaY;
+      setModalPosition(clampModalPosition(nextX, nextY));
+    };
+
+    const handleUp = () => {
+      setIsDragging(false);
+      dragStateRef.current = null;
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [clampModalPosition, isDragging]);
 
   const fetchMatches = useCallback(async () => {
     if (!walletConnected) {
       setMatches([]);
       setLoading(false);
+      hasLoadedOnceRef.current = false;
       return;
     }
 
-    setLoading(true);
+    const showLoading = !hasLoadedOnceRef.current;
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
-      const { contract } = await getContract();
+      const { contract } = await getReadGameContract();
       const data = await contract.getMatches();
 
       const formatted: Match[] = data.map((m: any, i: number) => {
@@ -70,6 +375,46 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
       });
 
       setMatches(formatted);
+
+      if (accountLower) {
+        const active = formatted.find(
+          (m) =>
+            (m.player1.toLowerCase() === accountLower ||
+              m.player2.toLowerCase() === accountLower) &&
+            m.state === MatchState.InProgress
+        );
+
+        if (active) {
+          if (active.id !== lastActiveMatchIdRef.current) {
+            lastActiveMatchIdRef.current = active.id;
+            if (active.id !== selectedMatchId) {
+              notifyActiveMatch(active);
+            }
+          }
+        } else {
+          lastActiveMatchIdRef.current = null;
+        }
+
+        const turnMap = lastTurnByMatchRef.current;
+        formatted.forEach((m) => {
+          const isParticipant =
+            m.player1.toLowerCase() === accountLower ||
+            m.player2.toLowerCase() === accountLower;
+
+          if (!isParticipant || m.state !== MatchState.InProgress) {
+            delete turnMap[m.id];
+            return;
+          }
+
+          const currentTurn = m.currentTurn.toLowerCase();
+          const previousTurn = turnMap[m.id];
+          turnMap[m.id] = currentTurn;
+
+          if (currentTurn === accountLower && previousTurn !== accountLower) {
+            notifyYourTurn(m);
+          }
+        });
+      }
     } catch (err) {
       console.error("Error fetching matches:", err);
       setActionMessage({
@@ -77,9 +422,12 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
         message: "Nu am putut încărca meciurile. Verifică conexiunea la rețea.",
       });
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+        hasLoadedOnceRef.current = true;
+      }
     }
-  }, [walletConnected]);
+  }, [accountLower, notifyActiveMatch, notifyYourTurn, selectedMatchId, walletConnected]);
 
   useEffect(() => {
     fetchMatches();
@@ -94,6 +442,13 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
   }, [matches, selectedMatchId]);
 
   useEffect(() => {
+    lastTurnByMatchRef.current = {};
+    lastActiveMatchIdRef.current = null;
+    dismissedActiveMatchIdRef.current = null;
+    setToasts([]);
+  }, [accountLower]);
+
+  useEffect(() => {
     if (!walletConnected) return;
 
     let isMounted = true;
@@ -101,7 +456,7 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
 
     const setupListeners = async () => {
       try {
-        const { contract } = await getContract();
+        const { contract } = await getReadGameContract();
 
         const refresh = (label: string) => {
           if (isMounted) {
@@ -146,6 +501,15 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
     };
   }, [walletConnected, fetchMatches]);
 
+  useEffect(() => {
+    if (!walletConnected) return;
+    const intervalId = window.setInterval(() => {
+      fetchMatches();
+    }, 800);
+
+    return () => window.clearInterval(intervalId);
+  }, [walletConnected, fetchMatches]);
+
   const handleJoin = async (match: Match) => {
     if (!walletConnected) {
       setActionMessage({
@@ -170,7 +534,7 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
         message: `Te-ai alăturat meciului #${match.id}. Succes!`,
       });
       window.dispatchEvent(new CustomEvent("matches:refresh"));
-      setSelectedMatchId(match.id);
+      openMatch(match.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Tranzacție eșuată.";
       setActionMessage({ type: "error", message: `Eroare la alăturare: ${message}` });
@@ -227,6 +591,28 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
         </p>
       </div>
 
+      <div className="notify-row">
+        <div className="notify-row__text">
+          <strong>Notificari desktop</strong>
+          <span>Primesti alerta cand e randul tau.</span>
+        </div>
+        {notificationPermission === "granted" ? (
+          <span className="notify-pill notify-pill--active">Activ</span>
+        ) : notificationPermission === "denied" ? (
+          <span className="notify-pill notify-pill--muted">Blocat</span>
+        ) : notificationPermission === "unsupported" ? (
+          <span className="notify-pill notify-pill--muted">Indisponibil</span>
+        ) : (
+          <button
+            type="button"
+            className="secondary-button primary-button--compact"
+            onClick={requestNotificationPermission}
+          >
+            Activeaza
+          </button>
+        )}
+      </div>
+
       {actionMessage && (
         <p className={`status-message status-message--${actionMessage.type}`} role="alert">
           {actionMessage.message}
@@ -263,9 +649,17 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
                   const awaitingOpponent =
                     m.state === MatchState.WaitingOpponent &&
                     m.player2 === ZERO_ADDRESS;
+                  const isYourTurn =
+                    accountLower !== null &&
+                    m.state === MatchState.InProgress &&
+                    m.currentTurn.toLowerCase() === accountLower;
 
                   return (
-                    <tr key={m.id} onClick={() => setSelectedMatchId(m.id)}>
+                    <tr
+                      key={m.id}
+                      onClick={() => openMatch(m.id)}
+                      className={isYourTurn ? "match-row match-row--your-turn" : "match-row"}
+                    >
                       <td>{m.id}</td>
                       <td>{shortAddress(m.player1)}</td>
                       <td>
@@ -273,7 +667,14 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
                       </td>
                       <td>{m.betAmountEth}</td>
                       <td>{m.moves}</td>
-                      <td>{renderStatus(m)}</td>
+                      <td>
+                        <div className="status-stack">
+                          <span>{renderStatus(m)}</span>
+                          {isYourTurn ? (
+                            <span className="turn-pill">Randul tau</span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td>{renderWinner(m)}</td>
                       <td>
                         <div className="action-stack">
@@ -295,10 +696,10 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
                             className="ghost-button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedMatchId(m.id);
+                              openMatch(m.id);
                             }}
                           >
-                            Deschide tabla
+                            Vezi meciul
                           </button>
                         </div>
                       </td>
@@ -309,15 +710,112 @@ const MatchesList: React.FC<MatchesListProps> = ({ walletConnected, account }) =
             </table>
           </div>
 
-          {selectedMatch && (
-            <TicTacToeBoard
-              match={selectedMatch}
-              account={account}
-              onClose={() => setSelectedMatchId(null)}
-            />
-          )}
+          {isModalOpen &&
+            typeof document !== "undefined" &&
+            createPortal(
+              <div
+                className="game-modal-overlay"
+                role="dialog"
+                aria-modal="true"
+                onClick={() => {
+                  if (didDragRef.current) {
+                    didDragRef.current = false;
+                    return;
+                  }
+                  closeMatch();
+                }}
+              >
+                <div
+                  ref={modalRef}
+                  className={`game-modal ${
+                    modalPosition ? "game-modal--floating" : ""
+                  } ${isDragging ? "game-modal--dragging" : ""}`}
+                  style={
+                    modalPosition ? { left: modalPosition.x, top: modalPosition.y } : undefined
+                  }
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="game-modal__header" onMouseDown={startDrag}>
+                    <div>
+                      <h3>Meci #{selectedMatchId}</h3>
+                      <p>Fereastra dedicata pentru jocul curent.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="tertiary-button"
+                      onClick={closeMatch}
+                      onMouseDown={(event) => event.stopPropagation()}
+                    >
+                      Inchide
+                    </button>
+                  </div>
+                  <div className="game-modal__body">
+                    {selectedMatch ? (
+                      <TicTacToeBoard
+                        match={selectedMatch}
+                        account={account}
+                        onClose={closeMatch}
+                        layout="modal"
+                        showClose={false}
+                      />
+                    ) : (
+                      <div className="skeleton">
+                        <span>Se incarca meciul...</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
         </>
       )}
+
+      {toasts.length > 0 ? (
+        <div className="toast-stack" role="status" aria-live="polite">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast toast--${toast.kind}`}>
+              <div className="toast__content">
+                <strong>{toast.title}</strong>
+                <span>{toast.message}</span>
+              </div>
+              <div className="toast__actions">
+                {toast.actionMatchId !== undefined ? (
+                  <button
+                    type="button"
+                    className="primary-button primary-button--compact"
+                    onClick={() => {
+                      const matchId = toast.actionMatchId;
+                      if (matchId === undefined) {
+                        return;
+                      }
+                      openMatch(matchId);
+                      dismissToast(toast.id);
+                    }}
+                  >
+                    {toast.actionLabel ?? "View"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    if (
+                      toast.id.startsWith("active-") &&
+                      toast.actionMatchId !== undefined
+                    ) {
+                      dismissedActiveMatchIdRef.current = toast.actionMatchId;
+                    }
+                    dismissToast(toast.id);
+                  }}
+                >
+                  Inchide
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 };

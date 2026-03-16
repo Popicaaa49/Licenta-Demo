@@ -7,6 +7,8 @@ interface TicTacToeBoardProps {
   match: Match;
   account: string | null;
   onClose: () => void;
+  layout?: "inline" | "modal";
+  showClose?: boolean;
 }
 
 type BoardStatus =
@@ -22,7 +24,13 @@ const symbolForValue = (value: number) => {
   return "";
 };
 
-const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ match, account, onClose }) => {
+const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
+  match,
+  account,
+  onClose,
+  layout = "inline",
+  showClose = true,
+}) => {
   const [pendingCell, setPendingCell] = useState<number | null>(null);
   const [status, setStatus] = useState<BoardStatus | null>(null);
 
@@ -43,6 +51,7 @@ const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ match, account, onClose
     match.state === MatchState.InProgress &&
     isParticipant &&
     lowerAccount === match.currentTurn.toLowerCase();
+  const isYourTurn = canMove;
 
   const turnDisplay =
     match.currentTurn === ZERO_ADDRESS ? "—" : shortAddress(match.currentTurn);
@@ -100,8 +109,12 @@ const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ match, account, onClose
     }
   };
 
+  const boardClassName = `board-panel ${
+    layout === "modal" ? "board-panel--modal" : ""
+  } ${isYourTurn ? "board-panel--your-turn" : ""}`;
+
   return (
-    <div className="board-panel">
+    <div className={boardClassName}>
       <div className="board-header">
         <div>
           <h3>Meci #{match.id}</h3>
@@ -110,9 +123,11 @@ const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ match, account, onClose
             <strong>{ethers.formatEther(totalPotWei)} ETH</strong>
           </p>
         </div>
-        <button type="button" className="tertiary-button" onClick={onClose}>
-          Închide
-        </button>
+        {showClose ? (
+          <button type="button" className="tertiary-button" onClick={onClose}>
+            Inchide
+          </button>
+        ) : null}
       </div>
 
       <div className="board-meta">
@@ -138,6 +153,9 @@ const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ match, account, onClose
             <strong>Conectează-ți portofelul pentru a face mutări.</strong>
           </div>
         )}
+        {isYourTurn ? (
+          <div className="turn-indicator">Este randul tau. Alege o caseta.</div>
+        ) : null}
       </div>
 
       <div className="board-grid">

@@ -4,6 +4,8 @@ import GameInterface from "./components/GameInterface";
 import MatchesList from "./components/MatchesList";
 import MatchHistory from "./components/MatchHistory";
 import AccountStats from "./components/AccountStats";
+import InsuranceInterface from "./components/InsuranceInterface";
+import InsurancePoliciesList from "./components/InsurancePoliciesList";
 import { usePlayerHistory } from "./hooks/usePlayerHistory";
 import "./App.css";
 
@@ -31,6 +33,7 @@ const App: React.FC = () => {
   const [chainIdHex, setChainIdHex] = useState<string>("");
   const [walletReady, setWalletReady] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [activeModule, setActiveModule] = useState<"game" | "insurance">("game");
 
   const networkLabel = useMemo(() => resolveChainLabel(chainIdHex), [chainIdHex]);
   const { history, loading: historyLoading, error: historyError, stats } = usePlayerHistory(
@@ -97,9 +100,7 @@ const App: React.FC = () => {
         <header className="app-header">
           <div className="app-title-group">
             <h1 className="app-title">Aici voi pune titlul licentei</h1>
-            <p className="app-subtitle">
-              Demo Licenta in continua actualizare
-            </p>
+            <p className="app-subtitle">Demo Licenta in continua actualizare</p>
           </div>
           <div className="header-actions">
             <button
@@ -130,24 +131,63 @@ const App: React.FC = () => {
           </div>
         </header>
 
+        <nav className="module-nav" aria-label="Module">
+          <button
+            type="button"
+            className={`module-tab ${activeModule === "game" ? "module-tab--active" : ""}`}
+            onClick={() => setActiveModule("game")}
+            aria-pressed={activeModule === "game"}
+          >
+            <span className="module-tab__title">Joc X/0</span>
+            <span className="module-tab__desc">Creeaza, intra in meciuri si joaca live.</span>
+          </button>
+          <button
+            type="button"
+            className={`module-tab ${
+              activeModule === "insurance" ? "module-tab--active" : ""
+            }`}
+            onClick={() => setActiveModule("insurance")}
+            aria-pressed={activeModule === "insurance"}
+          >
+            <span className="module-tab__title">Asigurari P2P</span>
+            <span className="module-tab__desc">
+              Publica oferte si gestioneaza polite parametrice.
+            </span>
+          </button>
+        </nav>
+
         <main className="app-main">
-          <section className="panel panel--actions">
-            <GameInterface walletConnected={walletReady} />
-          </section>
+          {activeModule === "game" ? (
+            <>
+              <section className="panel panel--actions">
+                <GameInterface walletConnected={walletReady} />
+              </section>
 
-          <section className="panel panel--matches">
-            <MatchesList walletConnected={walletReady} account={account} />
-          </section>
+              <section className="panel panel--matches">
+                <MatchesList walletConnected={walletReady} account={account} />
+              </section>
 
-          <section className="panel panel--history">
-            <MatchHistory
-              walletConnected={walletReady}
-              account={account}
-              history={history}
-              loading={historyLoading}
-              error={historyError}
-            />
-          </section>
+              <section className="panel panel--history">
+                <MatchHistory
+                  walletConnected={walletReady}
+                  account={account}
+                  history={history}
+                  loading={historyLoading}
+                  error={historyError}
+                />
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="panel panel--insurance-actions">
+                <InsuranceInterface walletConnected={walletReady} account={account} />
+              </section>
+
+              <section className="panel panel--insurance-list">
+                <InsurancePoliciesList walletConnected={walletReady} account={account} />
+              </section>
+            </>
+          )}
         </main>
       </div>
 

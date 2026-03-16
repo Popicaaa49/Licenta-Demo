@@ -21,6 +21,10 @@ declare module "hardhat/types/runtime" {
       name: "GameEscrow",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.GameEscrow__factory>;
+    getContractFactory(
+      name: "InsuranceEscrow",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.InsuranceEscrow__factory>;
 
     getContractAt(
       name: "Counter",
@@ -32,6 +36,11 @@ declare module "hardhat/types/runtime" {
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.GameEscrow>;
+    getContractAt(
+      name: "InsuranceEscrow",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.InsuranceEscrow>;
 
     deployContract(
       name: "Counter",
@@ -41,6 +50,10 @@ declare module "hardhat/types/runtime" {
       name: "GameEscrow",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.GameEscrow>;
+    deployContract(
+      name: "InsuranceEscrow",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.InsuranceEscrow>;
 
     deployContract(
       name: "Counter",
@@ -52,6 +65,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.GameEscrow>;
+    deployContract(
+      name: "InsuranceEscrow",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.InsuranceEscrow>;
 
     // default types
     getContractFactory(

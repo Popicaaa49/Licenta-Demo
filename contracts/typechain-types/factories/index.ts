@@ -3,3 +3,4 @@
 /* eslint-disable */
 export { Counter__factory } from "./Counter__factory";
 export { GameEscrow__factory } from "./GameEscrow__factory";
+export { InsuranceEscrow__factory } from "./InsuranceEscrow__factory";
