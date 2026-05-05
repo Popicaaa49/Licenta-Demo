@@ -1,73 +1,201 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+/// @title Parametric agricultural insurance contract for demo purposes
+/// @notice The oracle submits normalized weather data, while the off-chain risk
+/// engine computes the risk score. The contract only checks the stored trigger
+/// conditions and performs the payout automatically.
 contract InsuranceEscrow {
     enum PolicyState {
-        Offered,
         Active,
-        Resolved,
+        PaidOut,
+        Expired,
         Cancelled
     }
 
-    struct Policy {
-        address insurer;
-        address insured;
-        uint256 coverageAmount;
-        uint256 premiumAmount;
-        uint256 durationSeconds;
-        uint256 startTime;
-        uint256 endTime;
-        string location;
-        uint256 windSpeedKmh;
-        PolicyState state;
-        bool eventOccurred;
+    enum QuoteLockState {
+        Uninitialized,
+        Locked,
+        Converted,
+        Released
     }
 
+    enum PremiumLockState {
+        Uninitialized,
+        Locked,
+        Converted,
+        Released
+    }
+
+    struct Policy {
+        address user;
+        address underwriter;
+        string locationId;
+        string cropType;
+        uint32 thresholdScore;
+        uint32 emergencyRain24h;
+        uint256 premiumAmount;
+        uint256 payoutAmount;
+        uint64 startTime;
+        uint64 endTime;
+        uint64 lastOracleUpdateAt;
+        uint32 lastRiskScore;
+        bool payoutTriggered;
+        PolicyState state;
+    }
+
+    struct WeatherReport {
+        uint64 observedAt;
+        uint32 rain1h;
+        uint32 rain24h;
+        uint32 rain72h;
+        uint32 consecutiveHeavyRainHours;
+        uint32 eventDurationHours;
+        uint32 windSpeed;
+        int32 temperature;
+        uint32 humidity;
+        string weatherCondition;
+        uint32 riskScore;
+    }
+
+    struct CapitalAccount {
+        uint256 deposited;
+        uint256 locked;
+    }
+
+    struct QuoteLock {
+        address underwriter;
+        uint256 amount;
+        QuoteLockState state;
+    }
+
+    struct PremiumLock {
+        address farmer;
+        uint256 amount;
+        PremiumLockState state;
+    }
+
+    uint32 public constant DEFAULT_THRESHOLD_SCORE = 8;
+    uint32 public constant DEFAULT_EMERGENCY_RAIN_24H = 80;
+
     uint256 public policyCount;
-    mapping(uint256 => Policy) public policies;
-    mapping(address => bool) public verifiedUsers;
+    uint256 public sharedPoolBalance;
+    uint256 public sharedPoolLockedReserve;
+    uint256 public lockedReserve;
 
     address public owner;
     address public oracle;
 
+    mapping(uint256 => Policy) public policies;
+    mapping(uint256 => WeatherReport) private latestReports;
+    mapping(bytes32 => uint256[]) private policyIdsByLocation;
+    mapping(address => CapitalAccount) private underwriterCapital;
+    mapping(uint256 => QuoteLock) private quoteLocks;
+    mapping(uint256 => PremiumLock) private premiumLocks;
+
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event OracleUpdated(address indexed newOracle);
-    event VerifiedUpdated(address indexed user, bool verified);
-    event PolicyOffered(
-        uint256 indexed policyId,
-        address indexed insurer,
-        uint256 coverageAmount,
-        uint256 premiumAmount
+    event OracleUpdated(address indexed previousOracle, address indexed newOracle);
+    event LiquidityAdded(address indexed sender, uint256 amount);
+    event UnderwriterCapitalDeposited(
+        address indexed underwriter,
+        uint256 amount,
+        uint256 totalDeposited
     );
-    event PolicyAccepted(
-        uint256 indexed policyId,
-        address indexed insured,
-        uint256 startTime,
-        uint256 endTime
+    event UnderwriterCapitalWithdrawn(
+        address indexed underwriter,
+        uint256 amount,
+        uint256 remainingDeposited
     );
-    event PolicyResolved(
-        uint256 indexed policyId,
-        bool eventOccurred,
-        uint256 payoutToInsured,
-        uint256 payoutToInsurer
+    event QuoteCapitalLocked(
+        uint256 indexed quoteId,
+        address indexed underwriter,
+        uint256 amount
     );
+    event QuoteCapitalReleased(
+        uint256 indexed quoteId,
+        address indexed underwriter,
+        uint256 amount
+    );
+    event QuotePremiumLocked(
+        uint256 indexed quoteId,
+        address indexed farmer,
+        uint256 amount
+    );
+    event QuotePremiumReleased(
+        uint256 indexed quoteId,
+        address indexed farmer,
+        uint256 amount
+    );
+    event QuoteCapitalConverted(
+        uint256 indexed quoteId,
+        uint256 indexed policyId,
+        address indexed underwriter,
+        uint256 amount
+    );
+    event QuotePremiumConverted(
+        uint256 indexed quoteId,
+        uint256 indexed policyId,
+        address indexed farmer,
+        uint256 amount
+    );
+    event PolicyCreated(
+        uint256 indexed policyId,
+        address indexed user,
+        address indexed underwriter,
+        string locationId,
+        string cropType,
+        uint32 thresholdScore,
+        uint32 emergencyRain24h,
+        uint256 payoutAmount,
+        uint64 startTime,
+        uint64 endTime
+    );
+    event WeatherReportSubmitted(
+        uint256 indexed policyId,
+        uint64 observedAt,
+        uint32 riskScore,
+        uint32 rain24h,
+        bool payoutTriggered
+    );
+    event PolicyPaidOut(
+        uint256 indexed policyId,
+        address indexed user,
+        address indexed underwriter,
+        uint256 payoutAmount,
+        uint32 riskScore,
+        uint32 rain24h
+    );
+    event PolicyExpired(uint256 indexed policyId);
     event PolicyCancelled(uint256 indexed policyId);
 
     error NotOwner();
     error NotOracle();
-    error NotVerified();
-    error PolicyNotFound();
-    error PolicyNotOpen();
-    error PolicyNotActive();
-    error PolicyStillActive();
-    error InsurerCannotAccept();
-    error NotInsurer();
-    error InvalidCoverage();
-    error InvalidPremium();
-    error InvalidDuration();
-    error InvalidPremiumPayment();
-    error InvalidOracle();
     error InvalidOwner();
+    error InvalidOracle();
+    error InvalidUser();
+    error InvalidLocation();
+    error InvalidCropType();
+    error InvalidTimeRange();
+    error InvalidPayoutAmount();
+    error InvalidTriggerThreshold();
+    error InsufficientUnlockedLiquidity();
+    error InvalidCapitalAmount();
+    error InvalidQuoteId();
+    error InsufficientUnderwriterCapital();
+    error QuoteCapitalUnavailable();
+    error QuoteLockNotFound();
+    error QuoteLockNotActive();
+    error QuoteLockAlreadyBound();
+    error QuoteLockAlreadyConverted();
+    error NotQuoteLockParticipant();
+    error PremiumLockNotFound();
+    error PremiumLockNotActive();
+    error PremiumLockAlreadyBound();
+    error PremiumLockAlreadyConverted();
+    error NotPremiumLockParticipant();
+    error PolicyNotFound();
+    error PolicyNotActive();
+    error ObservationOutsideCoverage();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -79,144 +207,507 @@ contract InsuranceEscrow {
         _;
     }
 
-    constructor(address initialOracle) {
+    constructor(address initialOracle) payable {
         owner = msg.sender;
         oracle = initialOracle == address(0) ? msg.sender : initialOracle;
-        verifiedUsers[msg.sender] = true;
-        if (oracle != msg.sender) {
-            verifiedUsers[oracle] = true;
+
+        if (msg.value > 0) {
+            sharedPoolBalance += msg.value;
+            emit LiquidityAdded(msg.sender, msg.value);
         }
+    }
+
+    receive() external payable {
+        if (msg.sender == owner) {
+            sharedPoolBalance += msg.value;
+            emit LiquidityAdded(msg.sender, msg.value);
+            return;
+        }
+
+        CapitalAccount storage account = underwriterCapital[msg.sender];
+        account.deposited += msg.value;
+
+        emit UnderwriterCapitalDeposited(msg.sender, msg.value, account.deposited);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert InvalidOwner();
+
         address previousOwner = owner;
         owner = newOwner;
+
         emit OwnershipTransferred(previousOwner, newOwner);
     }
 
     function setOracle(address newOracle) external onlyOwner {
         if (newOracle == address(0)) revert InvalidOracle();
+
+        address previousOracle = oracle;
         oracle = newOracle;
-        emit OracleUpdated(newOracle);
+
+        emit OracleUpdated(previousOracle, newOracle);
     }
 
-    function setVerified(address user, bool verified) external onlyOwner {
-        verifiedUsers[user] = verified;
-        emit VerifiedUpdated(user, verified);
+    function fundPool() external payable onlyOwner {
+        if (msg.value == 0) revert InvalidCapitalAmount();
+
+        sharedPoolBalance += msg.value;
+        emit LiquidityAdded(msg.sender, msg.value);
     }
 
-    function createPolicyOffer(
-        uint256 premiumAmount,
-        uint256 durationSeconds,
-        string calldata location,
-        uint256 windSpeedKmh
-    ) external payable returns (uint256 policyId) {
-        if (!verifiedUsers[msg.sender]) revert NotVerified();
-        if (msg.value == 0) revert InvalidCoverage();
-        if (premiumAmount == 0) revert InvalidPremium();
-        if (durationSeconds == 0) revert InvalidDuration();
+    function fundUnderwriterCapital() external payable {
+        if (msg.value == 0) revert InvalidCapitalAmount();
 
-        policyId = policyCount;
-        Policy storage p = policies[policyId];
-        p.insurer = msg.sender;
-        p.coverageAmount = msg.value;
-        p.premiumAmount = premiumAmount;
-        p.durationSeconds = durationSeconds;
-        p.location = location;
-        p.windSpeedKmh = windSpeedKmh;
-        p.state = PolicyState.Offered;
-        p.eventOccurred = false;
+        CapitalAccount storage account = underwriterCapital[msg.sender];
+        account.deposited += msg.value;
 
-        policyCount++;
-
-        emit PolicyOffered(policyId, msg.sender, msg.value, premiumAmount);
+        emit UnderwriterCapitalDeposited(msg.sender, msg.value, account.deposited);
     }
 
-    function cancelOffer(uint256 policyId) external {
-        Policy storage p = policies[policyId];
+    function withdrawUnderwriterCapital(uint256 amount) external {
+        if (amount == 0) revert InvalidCapitalAmount();
 
-        if (p.insurer == address(0)) revert PolicyNotFound();
-        if (p.state != PolicyState.Offered) revert PolicyNotOpen();
-        if (msg.sender != p.insurer) revert NotInsurer();
+        CapitalAccount storage account = underwriterCapital[msg.sender];
+        if (_availableUnderwriterCapital(account) < amount) {
+            revert InsufficientUnderwriterCapital();
+        }
 
-        p.state = PolicyState.Cancelled;
+        account.deposited -= amount;
+        _safeTransfer(msg.sender, amount);
 
-        _safeTransfer(p.insurer, p.coverageAmount);
+        emit UnderwriterCapitalWithdrawn(msg.sender, amount, account.deposited);
+    }
+
+    function availableLiquidity() public view returns (uint256) {
+        if (sharedPoolBalance <= sharedPoolLockedReserve) {
+            return 0;
+        }
+
+        return sharedPoolBalance - sharedPoolLockedReserve;
+    }
+
+    function availableUnderwriterCapital(address underwriter) public view returns (uint256) {
+        return _availableUnderwriterCapital(underwriterCapital[underwriter]);
+    }
+
+    function getUnderwriterCapitalAccount(
+        address underwriter
+    ) external view returns (uint256 deposited, uint256 locked, uint256 available) {
+        CapitalAccount memory account = underwriterCapital[underwriter];
+        deposited = account.deposited;
+        locked = account.locked;
+        available = _availableUnderwriterCapital(account);
+    }
+
+    function getQuoteLock(
+        uint256 quoteId
+    ) external view returns (address underwriter, uint256 amount, QuoteLockState state) {
+        QuoteLock memory quoteLock = quoteLocks[quoteId];
+        return (quoteLock.underwriter, quoteLock.amount, quoteLock.state);
+    }
+
+    function getPremiumLock(
+        uint256 quoteId
+    ) external view returns (address farmer, uint256 amount, PremiumLockState state) {
+        PremiumLock memory premiumLock = premiumLocks[quoteId];
+        return (premiumLock.farmer, premiumLock.amount, premiumLock.state);
+    }
+
+    function lockCapitalForQuote(uint256 quoteId, uint256 amount) external {
+        if (quoteId == 0) revert InvalidQuoteId();
+        if (amount == 0) revert InvalidCapitalAmount();
+
+        QuoteLock storage existing = quoteLocks[quoteId];
+        if (existing.state == QuoteLockState.Locked) revert QuoteLockAlreadyBound();
+        if (existing.state == QuoteLockState.Converted) revert QuoteLockAlreadyConverted();
+
+        CapitalAccount storage account = underwriterCapital[msg.sender];
+        if (_availableUnderwriterCapital(account) < amount) {
+            revert InsufficientUnderwriterCapital();
+        }
+
+        account.locked += amount;
+        lockedReserve += amount;
+
+        quoteLocks[quoteId] = QuoteLock({
+            underwriter: msg.sender,
+            amount: amount,
+            state: QuoteLockState.Locked
+        });
+
+        emit QuoteCapitalLocked(quoteId, msg.sender, amount);
+    }
+
+    function lockPremiumForQuote(uint256 quoteId) external payable {
+        if (quoteId == 0) revert InvalidQuoteId();
+        if (msg.value == 0) revert InvalidCapitalAmount();
+
+        PremiumLock storage existing = premiumLocks[quoteId];
+        if (existing.state == PremiumLockState.Locked) revert PremiumLockAlreadyBound();
+        if (existing.state == PremiumLockState.Converted) revert PremiumLockAlreadyConverted();
+
+        premiumLocks[quoteId] = PremiumLock({
+            farmer: msg.sender,
+            amount: msg.value,
+            state: PremiumLockState.Locked
+        });
+
+        emit QuotePremiumLocked(quoteId, msg.sender, msg.value);
+    }
+
+    function releaseQuoteCapital(uint256 quoteId) external {
+        QuoteLock storage quoteLock = _getQuoteLockForMutation(quoteId);
+        if (quoteLock.state != QuoteLockState.Locked) revert QuoteLockNotActive();
+        if (msg.sender != owner && msg.sender != quoteLock.underwriter) {
+            revert NotQuoteLockParticipant();
+        }
+
+        _releaseQuoteLock(quoteLock);
+
+        emit QuoteCapitalReleased(quoteId, quoteLock.underwriter, quoteLock.amount);
+    }
+
+    function releasePremiumForQuote(uint256 quoteId) external {
+        PremiumLock storage premiumLock = _getPremiumLockForMutation(quoteId);
+        if (premiumLock.state != PremiumLockState.Locked) revert PremiumLockNotActive();
+        if (msg.sender != owner && msg.sender != premiumLock.farmer) {
+            revert NotPremiumLockParticipant();
+        }
+
+        uint256 amount = premiumLock.amount;
+        address farmer = premiumLock.farmer;
+
+        premiumLock.state = PremiumLockState.Released;
+        premiumLock.amount = 0;
+
+        _safeTransfer(farmer, amount);
+
+        emit QuotePremiumReleased(quoteId, farmer, amount);
+    }
+
+    function createPolicy(
+        address user,
+        string calldata locationId,
+        string calldata cropType,
+        uint32 thresholdScore,
+        uint32 emergencyRain24h,
+        uint256 payoutAmount,
+        uint64 startTime,
+        uint64 endTime
+    ) external onlyOwner returns (uint256 policyId) {
+        if (availableLiquidity() < payoutAmount) {
+            revert InsufficientUnlockedLiquidity();
+        }
+
+        policyId = _createPolicyRecord(
+            user,
+            address(0),
+            locationId,
+            cropType,
+            thresholdScore,
+            emergencyRain24h,
+            0,
+            payoutAmount,
+            startTime,
+            endTime
+        );
+
+        sharedPoolLockedReserve += payoutAmount;
+        lockedReserve += payoutAmount;
+    }
+
+    function createPolicyFromQuote(
+        uint256 quoteId,
+        address user,
+        string calldata locationId,
+        string calldata cropType,
+        uint32 thresholdScore,
+        uint32 emergencyRain24h,
+        uint64 startTime,
+        uint64 endTime
+    ) external onlyOwner returns (uint256 policyId) {
+        QuoteLock storage quoteLock = _getQuoteLockForMutation(quoteId);
+        if (quoteLock.state != QuoteLockState.Locked) revert QuoteLockNotActive();
+        if (quoteLock.amount == 0) revert QuoteCapitalUnavailable();
+
+        PremiumLock storage premiumLock = _getPremiumLockForMutation(quoteId);
+        if (premiumLock.state != PremiumLockState.Locked) revert PremiumLockNotActive();
+        if (premiumLock.amount == 0) revert InvalidCapitalAmount();
+
+        policyId = _createPolicyRecord(
+            user,
+            quoteLock.underwriter,
+            locationId,
+            cropType,
+            thresholdScore,
+            emergencyRain24h,
+            premiumLock.amount,
+            quoteLock.amount,
+            startTime,
+            endTime
+        );
+
+        quoteLock.state = QuoteLockState.Converted;
+        premiumLock.state = PremiumLockState.Converted;
+
+        emit QuoteCapitalConverted(
+            quoteId,
+            policyId,
+            quoteLock.underwriter,
+            quoteLock.amount
+        );
+        emit QuotePremiumConverted(
+            quoteId,
+            policyId,
+            premiumLock.farmer,
+            premiumLock.amount
+        );
+    }
+
+    function cancelPolicy(uint256 policyId) external onlyOwner {
+        Policy storage policy = _getPolicyForMutation(policyId);
+        if (policy.state != PolicyState.Active) revert PolicyNotActive();
+
+        policy.state = PolicyState.Cancelled;
+        _releasePolicyReserve(policy);
+        _refundPolicyPremium(policy);
 
         emit PolicyCancelled(policyId);
     }
 
-    function acceptPolicy(uint256 policyId) external payable {
-        Policy storage p = policies[policyId];
+    function submitWeatherReport(
+        uint256 policyId,
+        WeatherReport calldata report
+    ) external onlyOracle returns (bool payoutTriggered) {
+        Policy storage policy = _getPolicyForMutation(policyId);
+        if (policy.state != PolicyState.Active) revert PolicyNotActive();
 
-        if (p.insurer == address(0)) revert PolicyNotFound();
-        if (p.state != PolicyState.Offered) revert PolicyNotOpen();
-        if (msg.sender == p.insurer) revert InsurerCannotAccept();
-        if (!verifiedUsers[msg.sender]) revert NotVerified();
-        if (msg.value != p.premiumAmount) revert InvalidPremiumPayment();
-
-        p.insured = msg.sender;
-        p.startTime = block.timestamp;
-        p.endTime = block.timestamp + p.durationSeconds;
-        p.state = PolicyState.Active;
-
-        emit PolicyAccepted(policyId, msg.sender, p.startTime, p.endTime);
-    }
-
-    function resolvePolicy(uint256 policyId, bool eventOccurred) external onlyOracle {
-        Policy storage p = policies[policyId];
-
-        if (p.insurer == address(0)) revert PolicyNotFound();
-        if (p.state != PolicyState.Active) revert PolicyNotActive();
-
-        p.state = PolicyState.Resolved;
-        p.eventOccurred = eventOccurred;
-
-        uint256 payoutToInsured;
-        uint256 payoutToInsurer;
-
-        if (eventOccurred) {
-            payoutToInsured = p.coverageAmount;
-            payoutToInsurer = p.premiumAmount;
-            _safeTransfer(p.insured, payoutToInsured);
-            _safeTransfer(p.insurer, payoutToInsurer);
-        } else {
-            payoutToInsurer = p.coverageAmount + p.premiumAmount;
-            _safeTransfer(p.insurer, payoutToInsurer);
+        if (report.observedAt < policy.startTime || report.observedAt > policy.endTime) {
+            revert ObservationOutsideCoverage();
         }
 
-        emit PolicyResolved(policyId, eventOccurred, payoutToInsured, payoutToInsurer);
-    }
+        latestReports[policyId] = report;
+        policy.lastOracleUpdateAt = report.observedAt;
+        policy.lastRiskScore = report.riskScore;
 
-    function finalizeExpiredPolicy(uint256 policyId) external {
-        Policy storage p = policies[policyId];
+        payoutTriggered = report.riskScore >= policy.thresholdScore ||
+            report.rain24h > policy.emergencyRain24h;
 
-        if (p.insurer == address(0)) revert PolicyNotFound();
-        if (p.state != PolicyState.Active) revert PolicyNotActive();
-        if (block.timestamp <= p.endTime) revert PolicyStillActive();
+        emit WeatherReportSubmitted(
+            policyId,
+            report.observedAt,
+            report.riskScore,
+            report.rain24h,
+            payoutTriggered
+        );
 
-        p.state = PolicyState.Resolved;
-        p.eventOccurred = false;
+        if (payoutTriggered) {
+            policy.payoutTriggered = true;
+            policy.state = PolicyState.PaidOut;
+            _releasePolicyReserve(policy);
+            _consumePolicyCapital(policy);
+            _settlePolicyPremium(policy);
 
-        uint256 payoutToInsurer = p.coverageAmount + p.premiumAmount;
-        _safeTransfer(p.insurer, payoutToInsurer);
+            _safeTransfer(policy.user, policy.payoutAmount);
 
-        emit PolicyResolved(policyId, false, 0, payoutToInsurer);
-    }
-
-    function getPolicies() external view returns (Policy[] memory) {
-        Policy[] memory allPolicies = new Policy[](policyCount);
-        for (uint256 i = 0; i < policyCount; i++) {
-            allPolicies[i] = policies[i];
+            emit PolicyPaidOut(
+                policyId,
+                policy.user,
+                policy.underwriter,
+                policy.payoutAmount,
+                report.riskScore,
+                report.rain24h
+            );
         }
-        return allPolicies;
+    }
+
+    function expirePolicy(uint256 policyId) external {
+        Policy storage policy = _getPolicyForMutation(policyId);
+        if (policy.state != PolicyState.Active) revert PolicyNotActive();
+        if (block.timestamp <= policy.endTime) revert ObservationOutsideCoverage();
+
+        policy.state = PolicyState.Expired;
+        _releasePolicyReserve(policy);
+        _settlePolicyPremium(policy);
+
+        emit PolicyExpired(policyId);
     }
 
     function getPolicy(uint256 policyId) external view returns (Policy memory) {
-        Policy memory p = policies[policyId];
-        if (p.insurer == address(0)) revert PolicyNotFound();
-        return p;
+        Policy memory policy = policies[policyId];
+        if (policy.user == address(0)) revert PolicyNotFound();
+        return policy;
+    }
+
+    function getPolicies() external view returns (Policy[] memory allPolicies) {
+        allPolicies = new Policy[](policyCount);
+
+        for (uint256 i = 0; i < policyCount; i++) {
+            allPolicies[i] = policies[i];
+        }
+    }
+
+    function getLatestReport(uint256 policyId) external view returns (WeatherReport memory) {
+        Policy memory policy = policies[policyId];
+        if (policy.user == address(0)) revert PolicyNotFound();
+        return latestReports[policyId];
+    }
+
+    function getPoliciesByLocation(
+        string calldata locationId
+    ) external view returns (uint256[] memory) {
+        return policyIdsByLocation[_locationKey(locationId)];
+    }
+
+    function _createPolicyRecord(
+        address user,
+        address underwriter,
+        string calldata locationId,
+        string calldata cropType,
+        uint32 thresholdScore,
+        uint32 emergencyRain24h,
+        uint256 premiumAmount,
+        uint256 payoutAmount,
+        uint64 startTime,
+        uint64 endTime
+    ) private returns (uint256 policyId) {
+        if (user == address(0)) revert InvalidUser();
+        if (bytes(locationId).length == 0) revert InvalidLocation();
+        if (bytes(cropType).length == 0) revert InvalidCropType();
+        if (payoutAmount == 0) revert InvalidPayoutAmount();
+        if (endTime <= startTime) revert InvalidTimeRange();
+
+        uint32 effectiveThreshold = thresholdScore == 0
+            ? DEFAULT_THRESHOLD_SCORE
+            : thresholdScore;
+        uint32 effectiveEmergencyRain = emergencyRain24h == 0
+            ? DEFAULT_EMERGENCY_RAIN_24H
+            : emergencyRain24h;
+
+        if (effectiveThreshold == 0 || effectiveEmergencyRain == 0) {
+            revert InvalidTriggerThreshold();
+        }
+
+        policyId = policyCount;
+
+        policies[policyId] = Policy({
+            user: user,
+            underwriter: underwriter,
+            locationId: locationId,
+            cropType: cropType,
+            thresholdScore: effectiveThreshold,
+            emergencyRain24h: effectiveEmergencyRain,
+            premiumAmount: premiumAmount,
+            payoutAmount: payoutAmount,
+            startTime: startTime,
+            endTime: endTime,
+            lastOracleUpdateAt: 0,
+            lastRiskScore: 0,
+            payoutTriggered: false,
+            state: PolicyState.Active
+        });
+
+        policyIdsByLocation[_locationKey(locationId)].push(policyId);
+        policyCount++;
+
+        emit PolicyCreated(
+            policyId,
+            user,
+            underwriter,
+            locationId,
+            cropType,
+            effectiveThreshold,
+            effectiveEmergencyRain,
+            payoutAmount,
+            startTime,
+            endTime
+        );
+    }
+
+    function _releasePolicyReserve(Policy storage policy) private {
+        lockedReserve -= policy.payoutAmount;
+
+        if (policy.underwriter == address(0)) {
+            sharedPoolLockedReserve -= policy.payoutAmount;
+            return;
+        }
+
+        underwriterCapital[policy.underwriter].locked -= policy.payoutAmount;
+    }
+
+    function _consumePolicyCapital(Policy storage policy) private {
+        if (policy.underwriter == address(0)) {
+            sharedPoolBalance -= policy.payoutAmount;
+            return;
+        }
+
+        underwriterCapital[policy.underwriter].deposited -= policy.payoutAmount;
+    }
+
+    function _refundPolicyPremium(Policy storage policy) private {
+        if (policy.premiumAmount == 0) {
+            return;
+        }
+
+        uint256 premiumAmount = policy.premiumAmount;
+        policy.premiumAmount = 0;
+
+        _safeTransfer(policy.user, premiumAmount);
+    }
+
+    function _settlePolicyPremium(Policy storage policy) private {
+        if (policy.premiumAmount == 0) {
+            return;
+        }
+
+        uint256 premiumAmount = policy.premiumAmount;
+        address recipient = policy.underwriter == address(0) ? owner : policy.underwriter;
+        policy.premiumAmount = 0;
+
+        _safeTransfer(recipient, premiumAmount);
+    }
+
+    function _releaseQuoteLock(QuoteLock storage quoteLock) private {
+        underwriterCapital[quoteLock.underwriter].locked -= quoteLock.amount;
+        lockedReserve -= quoteLock.amount;
+        quoteLock.state = QuoteLockState.Released;
+    }
+
+    function _getPolicyForMutation(uint256 policyId) private view returns (Policy storage policy) {
+        policy = policies[policyId];
+        if (policy.user == address(0)) revert PolicyNotFound();
+    }
+
+    function _getQuoteLockForMutation(
+        uint256 quoteId
+    ) private view returns (QuoteLock storage quoteLock) {
+        if (quoteId == 0) revert InvalidQuoteId();
+
+        quoteLock = quoteLocks[quoteId];
+        if (quoteLock.underwriter == address(0)) revert QuoteLockNotFound();
+    }
+
+    function _getPremiumLockForMutation(
+        uint256 quoteId
+    ) private view returns (PremiumLock storage premiumLock) {
+        if (quoteId == 0) revert InvalidQuoteId();
+
+        premiumLock = premiumLocks[quoteId];
+        if (premiumLock.farmer == address(0)) revert PremiumLockNotFound();
+    }
+
+    function _locationKey(string memory locationId) private pure returns (bytes32) {
+        return keccak256(bytes(locationId));
+    }
+
+    function _availableUnderwriterCapital(
+        CapitalAccount memory account
+    ) private pure returns (uint256) {
+        if (account.deposited <= account.locked) {
+            return 0;
+        }
+
+        return account.deposited - account.locked;
     }
 
     function _safeTransfer(address to, uint256 amount) private {

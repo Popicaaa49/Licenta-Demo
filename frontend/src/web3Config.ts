@@ -114,3 +114,36 @@ export const getInsuranceContract = async () => {
   );
   return { contract, signer, provider };
 };
+
+export const getReadInsuranceContract = async () => {
+  const addressBook = insuranceAddresses as Record<string, string>;
+  const provider = await getReadProvider();
+
+  if (provider) {
+    const network = await provider.getNetwork();
+    const contractAddress = resolveContractAddress(
+      addressBook,
+      network.chainId,
+      "InsuranceEscrow"
+    );
+    const contract = new ethers.Contract(
+      contractAddress,
+      InsuranceEscrow.abi,
+      provider
+    );
+    return { contract, provider };
+  }
+
+  const { provider: walletProvider, network } = await getWeb3Context();
+  const contractAddress = resolveContractAddress(
+    addressBook,
+    network.chainId,
+    "InsuranceEscrow"
+  );
+  const contract = new ethers.Contract(
+    contractAddress,
+    InsuranceEscrow.abi,
+    walletProvider
+  );
+  return { contract, provider: walletProvider };
+};

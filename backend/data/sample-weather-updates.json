@@ -1,0 +1,22 @@
+[
+  {
+    "locationId": "RO-TM-001",
+    "timestamp": "2026-07-15T09:00:00Z",
+    "rain1h": 25,
+    "windSpeed": 18,
+    "temperature": 36,
+    "humidity": 92,
+    "weatherType": "thunderstorm",
+    "source": "demo-seed"
+  },
+  {
+    "locationId": "RO-BH-002",
+    "timestamp": "2026-07-15T09:00:00Z",
+    "rain1h": 4,
+    "windSpeed": 7,
+    "temperature": 28,
+    "humidity": 61,
+    "weatherType": "clouds",
+    "source": "demo-seed"
+  }
+]

@@ -24,92 +24,210 @@ import type {
 } from "./common";
 
 export declare namespace InsuranceEscrow {
+  export type WeatherReportStruct = {
+    observedAt: BigNumberish;
+    rain1h: BigNumberish;
+    rain24h: BigNumberish;
+    rain72h: BigNumberish;
+    consecutiveHeavyRainHours: BigNumberish;
+    eventDurationHours: BigNumberish;
+    windSpeed: BigNumberish;
+    temperature: BigNumberish;
+    humidity: BigNumberish;
+    weatherCondition: string;
+    riskScore: BigNumberish;
+  };
+
+  export type WeatherReportStructOutput = [
+    observedAt: bigint,
+    rain1h: bigint,
+    rain24h: bigint,
+    rain72h: bigint,
+    consecutiveHeavyRainHours: bigint,
+    eventDurationHours: bigint,
+    windSpeed: bigint,
+    temperature: bigint,
+    humidity: bigint,
+    weatherCondition: string,
+    riskScore: bigint
+  ] & {
+    observedAt: bigint;
+    rain1h: bigint;
+    rain24h: bigint;
+    rain72h: bigint;
+    consecutiveHeavyRainHours: bigint;
+    eventDurationHours: bigint;
+    windSpeed: bigint;
+    temperature: bigint;
+    humidity: bigint;
+    weatherCondition: string;
+    riskScore: bigint;
+  };
+
   export type PolicyStruct = {
-    insurer: AddressLike;
-    insured: AddressLike;
-    coverageAmount: BigNumberish;
+    user: AddressLike;
+    underwriter: AddressLike;
+    locationId: string;
+    cropType: string;
+    thresholdScore: BigNumberish;
+    emergencyRain24h: BigNumberish;
     premiumAmount: BigNumberish;
-    durationSeconds: BigNumberish;
+    payoutAmount: BigNumberish;
     startTime: BigNumberish;
     endTime: BigNumberish;
-    location: string;
-    windSpeedKmh: BigNumberish;
+    lastOracleUpdateAt: BigNumberish;
+    lastRiskScore: BigNumberish;
+    payoutTriggered: boolean;
     state: BigNumberish;
-    eventOccurred: boolean;
   };
 
   export type PolicyStructOutput = [
-    insurer: string,
-    insured: string,
-    coverageAmount: bigint,
+    user: string,
+    underwriter: string,
+    locationId: string,
+    cropType: string,
+    thresholdScore: bigint,
+    emergencyRain24h: bigint,
     premiumAmount: bigint,
-    durationSeconds: bigint,
+    payoutAmount: bigint,
     startTime: bigint,
     endTime: bigint,
-    location: string,
-    windSpeedKmh: bigint,
-    state: bigint,
-    eventOccurred: boolean
+    lastOracleUpdateAt: bigint,
+    lastRiskScore: bigint,
+    payoutTriggered: boolean,
+    state: bigint
   ] & {
-    insurer: string;
-    insured: string;
-    coverageAmount: bigint;
+    user: string;
+    underwriter: string;
+    locationId: string;
+    cropType: string;
+    thresholdScore: bigint;
+    emergencyRain24h: bigint;
     premiumAmount: bigint;
-    durationSeconds: bigint;
+    payoutAmount: bigint;
     startTime: bigint;
     endTime: bigint;
-    location: string;
-    windSpeedKmh: bigint;
+    lastOracleUpdateAt: bigint;
+    lastRiskScore: bigint;
+    payoutTriggered: boolean;
     state: bigint;
-    eventOccurred: boolean;
   };
 }
 
 export interface InsuranceEscrowInterface extends Interface {
   getFunction(
     nameOrSignature:
-      | "acceptPolicy"
-      | "cancelOffer"
-      | "createPolicyOffer"
-      | "finalizeExpiredPolicy"
+      | "DEFAULT_EMERGENCY_RAIN_24H"
+      | "DEFAULT_THRESHOLD_SCORE"
+      | "availableLiquidity"
+      | "availableUnderwriterCapital"
+      | "cancelPolicy"
+      | "createPolicy"
+      | "createPolicyFromQuote"
+      | "expirePolicy"
+      | "fundPool"
+      | "fundUnderwriterCapital"
+      | "getLatestReport"
       | "getPolicies"
+      | "getPoliciesByLocation"
       | "getPolicy"
+      | "getPremiumLock"
+      | "getQuoteLock"
+      | "getUnderwriterCapitalAccount"
+      | "lockCapitalForQuote"
+      | "lockPremiumForQuote"
+      | "lockedReserve"
       | "oracle"
       | "owner"
       | "policies"
       | "policyCount"
-      | "resolvePolicy"
+      | "releasePremiumForQuote"
+      | "releaseQuoteCapital"
       | "setOracle"
-      | "setVerified"
+      | "sharedPoolBalance"
+      | "sharedPoolLockedReserve"
+      | "submitWeatherReport"
       | "transferOwnership"
-      | "verifiedUsers"
+      | "withdrawUnderwriterCapital"
   ): FunctionFragment;
 
   getEvent(
     nameOrSignatureOrTopic:
+      | "LiquidityAdded"
       | "OracleUpdated"
       | "OwnershipTransferred"
-      | "PolicyAccepted"
       | "PolicyCancelled"
-      | "PolicyOffered"
-      | "PolicyResolved"
-      | "VerifiedUpdated"
+      | "PolicyCreated"
+      | "PolicyExpired"
+      | "PolicyPaidOut"
+      | "QuoteCapitalConverted"
+      | "QuoteCapitalLocked"
+      | "QuoteCapitalReleased"
+      | "QuotePremiumConverted"
+      | "QuotePremiumLocked"
+      | "QuotePremiumReleased"
+      | "UnderwriterCapitalDeposited"
+      | "UnderwriterCapitalWithdrawn"
+      | "WeatherReportSubmitted"
   ): EventFragment;
 
   encodeFunctionData(
-    functionFragment: "acceptPolicy",
+    functionFragment: "DEFAULT_EMERGENCY_RAIN_24H",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "DEFAULT_THRESHOLD_SCORE",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "availableLiquidity",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "availableUnderwriterCapital",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "cancelPolicy",
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
-    functionFragment: "cancelOffer",
+    functionFragment: "createPolicy",
+    values: [
+      AddressLike,
+      string,
+      string,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish
+    ]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "createPolicyFromQuote",
+    values: [
+      BigNumberish,
+      AddressLike,
+      string,
+      string,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish
+    ]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "expirePolicy",
     values: [BigNumberish]
   ): string;
+  encodeFunctionData(functionFragment: "fundPool", values?: undefined): string;
   encodeFunctionData(
-    functionFragment: "createPolicyOffer",
-    values: [BigNumberish, BigNumberish, string, BigNumberish]
+    functionFragment: "fundUnderwriterCapital",
+    values?: undefined
   ): string;
   encodeFunctionData(
-    functionFragment: "finalizeExpiredPolicy",
+    functionFragment: "getLatestReport",
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
@@ -117,8 +235,36 @@ export interface InsuranceEscrowInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
+    functionFragment: "getPoliciesByLocation",
+    values: [string]
+  ): string;
+  encodeFunctionData(
     functionFragment: "getPolicy",
     values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getPremiumLock",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getQuoteLock",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "getUnderwriterCapitalAccount",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "lockCapitalForQuote",
+    values: [BigNumberish, BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "lockPremiumForQuote",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "lockedReserve",
+    values?: undefined
   ): string;
   encodeFunctionData(functionFragment: "oracle", values?: undefined): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
@@ -131,47 +277,112 @@ export interface InsuranceEscrowInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
-    functionFragment: "resolvePolicy",
-    values: [BigNumberish, boolean]
+    functionFragment: "releasePremiumForQuote",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "releaseQuoteCapital",
+    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "setOracle",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
-    functionFragment: "setVerified",
-    values: [AddressLike, boolean]
+    functionFragment: "sharedPoolBalance",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "sharedPoolLockedReserve",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "submitWeatherReport",
+    values: [BigNumberish, InsuranceEscrow.WeatherReportStruct]
   ): string;
   encodeFunctionData(
     functionFragment: "transferOwnership",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
-    functionFragment: "verifiedUsers",
-    values: [AddressLike]
+    functionFragment: "withdrawUnderwriterCapital",
+    values: [BigNumberish]
   ): string;
 
   decodeFunctionResult(
-    functionFragment: "acceptPolicy",
+    functionFragment: "DEFAULT_EMERGENCY_RAIN_24H",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "cancelOffer",
+    functionFragment: "DEFAULT_THRESHOLD_SCORE",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "createPolicyOffer",
+    functionFragment: "availableLiquidity",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "finalizeExpiredPolicy",
+    functionFragment: "availableUnderwriterCapital",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "cancelPolicy",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "createPolicy",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "createPolicyFromQuote",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "expirePolicy",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(functionFragment: "fundPool", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "fundUnderwriterCapital",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "getLatestReport",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
     functionFragment: "getPolicies",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "getPoliciesByLocation",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "getPolicy", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "getPremiumLock",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "getQuoteLock",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "getUnderwriterCapitalAccount",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "lockCapitalForQuote",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "lockPremiumForQuote",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "lockedReserve",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "oracle", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "policies", data: BytesLike): Result;
@@ -180,12 +391,24 @@ export interface InsuranceEscrowInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "resolvePolicy",
+    functionFragment: "releasePremiumForQuote",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "releaseQuoteCapital",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "setOracle", data: BytesLike): Result;
   decodeFunctionResult(
-    functionFragment: "setVerified",
+    functionFragment: "sharedPoolBalance",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "sharedPoolLockedReserve",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "submitWeatherReport",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -193,15 +416,32 @@ export interface InsuranceEscrowInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "verifiedUsers",
+    functionFragment: "withdrawUnderwriterCapital",
     data: BytesLike
   ): Result;
 }
 
-export namespace OracleUpdatedEvent {
-  export type InputTuple = [newOracle: AddressLike];
-  export type OutputTuple = [newOracle: string];
+export namespace LiquidityAddedEvent {
+  export type InputTuple = [sender: AddressLike, amount: BigNumberish];
+  export type OutputTuple = [sender: string, amount: bigint];
   export interface OutputObject {
+    sender: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace OracleUpdatedEvent {
+  export type InputTuple = [
+    previousOracle: AddressLike,
+    newOracle: AddressLike
+  ];
+  export type OutputTuple = [previousOracle: string, newOracle: string];
+  export interface OutputObject {
+    previousOracle: string;
     newOracle: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
@@ -223,31 +463,6 @@ export namespace OwnershipTransferredEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace PolicyAcceptedEvent {
-  export type InputTuple = [
-    policyId: BigNumberish,
-    insured: AddressLike,
-    startTime: BigNumberish,
-    endTime: BigNumberish
-  ];
-  export type OutputTuple = [
-    policyId: bigint,
-    insured: string,
-    startTime: bigint,
-    endTime: bigint
-  ];
-  export interface OutputObject {
-    policyId: bigint;
-    insured: string;
-    startTime: bigint;
-    endTime: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
 export namespace PolicyCancelledEvent {
   export type InputTuple = [policyId: BigNumberish];
   export type OutputTuple = [policyId: bigint];
@@ -260,62 +475,287 @@ export namespace PolicyCancelledEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace PolicyOfferedEvent {
+export namespace PolicyCreatedEvent {
   export type InputTuple = [
     policyId: BigNumberish,
-    insurer: AddressLike,
-    coverageAmount: BigNumberish,
-    premiumAmount: BigNumberish
+    user: AddressLike,
+    underwriter: AddressLike,
+    locationId: string,
+    cropType: string,
+    thresholdScore: BigNumberish,
+    emergencyRain24h: BigNumberish,
+    payoutAmount: BigNumberish,
+    startTime: BigNumberish,
+    endTime: BigNumberish
   ];
   export type OutputTuple = [
     policyId: bigint,
-    insurer: string,
-    coverageAmount: bigint,
-    premiumAmount: bigint
+    user: string,
+    underwriter: string,
+    locationId: string,
+    cropType: string,
+    thresholdScore: bigint,
+    emergencyRain24h: bigint,
+    payoutAmount: bigint,
+    startTime: bigint,
+    endTime: bigint
   ];
   export interface OutputObject {
     policyId: bigint;
-    insurer: string;
-    coverageAmount: bigint;
-    premiumAmount: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
-export namespace PolicyResolvedEvent {
-  export type InputTuple = [
-    policyId: BigNumberish,
-    eventOccurred: boolean,
-    payoutToInsured: BigNumberish,
-    payoutToInsurer: BigNumberish
-  ];
-  export type OutputTuple = [
-    policyId: bigint,
-    eventOccurred: boolean,
-    payoutToInsured: bigint,
-    payoutToInsurer: bigint
-  ];
-  export interface OutputObject {
-    policyId: bigint;
-    eventOccurred: boolean;
-    payoutToInsured: bigint;
-    payoutToInsurer: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
-export namespace VerifiedUpdatedEvent {
-  export type InputTuple = [user: AddressLike, verified: boolean];
-  export type OutputTuple = [user: string, verified: boolean];
-  export interface OutputObject {
     user: string;
-    verified: boolean;
+    underwriter: string;
+    locationId: string;
+    cropType: string;
+    thresholdScore: bigint;
+    emergencyRain24h: bigint;
+    payoutAmount: bigint;
+    startTime: bigint;
+    endTime: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace PolicyExpiredEvent {
+  export type InputTuple = [policyId: BigNumberish];
+  export type OutputTuple = [policyId: bigint];
+  export interface OutputObject {
+    policyId: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace PolicyPaidOutEvent {
+  export type InputTuple = [
+    policyId: BigNumberish,
+    user: AddressLike,
+    underwriter: AddressLike,
+    payoutAmount: BigNumberish,
+    riskScore: BigNumberish,
+    rain24h: BigNumberish
+  ];
+  export type OutputTuple = [
+    policyId: bigint,
+    user: string,
+    underwriter: string,
+    payoutAmount: bigint,
+    riskScore: bigint,
+    rain24h: bigint
+  ];
+  export interface OutputObject {
+    policyId: bigint;
+    user: string;
+    underwriter: string;
+    payoutAmount: bigint;
+    riskScore: bigint;
+    rain24h: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuoteCapitalConvertedEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    policyId: BigNumberish,
+    underwriter: AddressLike,
+    amount: BigNumberish
+  ];
+  export type OutputTuple = [
+    quoteId: bigint,
+    policyId: bigint,
+    underwriter: string,
+    amount: bigint
+  ];
+  export interface OutputObject {
+    quoteId: bigint;
+    policyId: bigint;
+    underwriter: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuoteCapitalLockedEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    underwriter: AddressLike,
+    amount: BigNumberish
+  ];
+  export type OutputTuple = [
+    quoteId: bigint,
+    underwriter: string,
+    amount: bigint
+  ];
+  export interface OutputObject {
+    quoteId: bigint;
+    underwriter: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuoteCapitalReleasedEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    underwriter: AddressLike,
+    amount: BigNumberish
+  ];
+  export type OutputTuple = [
+    quoteId: bigint,
+    underwriter: string,
+    amount: bigint
+  ];
+  export interface OutputObject {
+    quoteId: bigint;
+    underwriter: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuotePremiumConvertedEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    policyId: BigNumberish,
+    farmer: AddressLike,
+    amount: BigNumberish
+  ];
+  export type OutputTuple = [
+    quoteId: bigint,
+    policyId: bigint,
+    farmer: string,
+    amount: bigint
+  ];
+  export interface OutputObject {
+    quoteId: bigint;
+    policyId: bigint;
+    farmer: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuotePremiumLockedEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    farmer: AddressLike,
+    amount: BigNumberish
+  ];
+  export type OutputTuple = [quoteId: bigint, farmer: string, amount: bigint];
+  export interface OutputObject {
+    quoteId: bigint;
+    farmer: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuotePremiumReleasedEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    farmer: AddressLike,
+    amount: BigNumberish
+  ];
+  export type OutputTuple = [quoteId: bigint, farmer: string, amount: bigint];
+  export interface OutputObject {
+    quoteId: bigint;
+    farmer: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace UnderwriterCapitalDepositedEvent {
+  export type InputTuple = [
+    underwriter: AddressLike,
+    amount: BigNumberish,
+    totalDeposited: BigNumberish
+  ];
+  export type OutputTuple = [
+    underwriter: string,
+    amount: bigint,
+    totalDeposited: bigint
+  ];
+  export interface OutputObject {
+    underwriter: string;
+    amount: bigint;
+    totalDeposited: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace UnderwriterCapitalWithdrawnEvent {
+  export type InputTuple = [
+    underwriter: AddressLike,
+    amount: BigNumberish,
+    remainingDeposited: BigNumberish
+  ];
+  export type OutputTuple = [
+    underwriter: string,
+    amount: bigint,
+    remainingDeposited: bigint
+  ];
+  export interface OutputObject {
+    underwriter: string;
+    amount: bigint;
+    remainingDeposited: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace WeatherReportSubmittedEvent {
+  export type InputTuple = [
+    policyId: BigNumberish,
+    observedAt: BigNumberish,
+    riskScore: BigNumberish,
+    rain24h: BigNumberish,
+    payoutTriggered: boolean
+  ];
+  export type OutputTuple = [
+    policyId: bigint,
+    observedAt: bigint,
+    riskScore: bigint,
+    rain24h: bigint,
+    payoutTriggered: boolean
+  ];
+  export interface OutputObject {
+    policyId: bigint;
+    observedAt: bigint;
+    riskScore: bigint;
+    rain24h: bigint;
+    payoutTriggered: boolean;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -366,33 +806,68 @@ export interface InsuranceEscrow extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
-  acceptPolicy: TypedContractMethod<
-    [policyId: BigNumberish],
-    [void],
-    "payable"
+  DEFAULT_EMERGENCY_RAIN_24H: TypedContractMethod<[], [bigint], "view">;
+
+  DEFAULT_THRESHOLD_SCORE: TypedContractMethod<[], [bigint], "view">;
+
+  availableLiquidity: TypedContractMethod<[], [bigint], "view">;
+
+  availableUnderwriterCapital: TypedContractMethod<
+    [underwriter: AddressLike],
+    [bigint],
+    "view"
   >;
 
-  cancelOffer: TypedContractMethod<
+  cancelPolicy: TypedContractMethod<
     [policyId: BigNumberish],
     [void],
     "nonpayable"
   >;
 
-  createPolicyOffer: TypedContractMethod<
+  createPolicy: TypedContractMethod<
     [
-      premiumAmount: BigNumberish,
-      durationSeconds: BigNumberish,
-      location: string,
-      windSpeedKmh: BigNumberish
+      user: AddressLike,
+      locationId: string,
+      cropType: string,
+      thresholdScore: BigNumberish,
+      emergencyRain24h: BigNumberish,
+      payoutAmount: BigNumberish,
+      startTime: BigNumberish,
+      endTime: BigNumberish
     ],
     [bigint],
-    "payable"
+    "nonpayable"
   >;
 
-  finalizeExpiredPolicy: TypedContractMethod<
+  createPolicyFromQuote: TypedContractMethod<
+    [
+      quoteId: BigNumberish,
+      user: AddressLike,
+      locationId: string,
+      cropType: string,
+      thresholdScore: BigNumberish,
+      emergencyRain24h: BigNumberish,
+      startTime: BigNumberish,
+      endTime: BigNumberish
+    ],
+    [bigint],
+    "nonpayable"
+  >;
+
+  expirePolicy: TypedContractMethod<
     [policyId: BigNumberish],
     [void],
     "nonpayable"
+  >;
+
+  fundPool: TypedContractMethod<[], [void], "payable">;
+
+  fundUnderwriterCapital: TypedContractMethod<[], [void], "payable">;
+
+  getLatestReport: TypedContractMethod<
+    [policyId: BigNumberish],
+    [InsuranceEscrow.WeatherReportStructOutput],
+    "view"
   >;
 
   getPolicies: TypedContractMethod<
@@ -401,11 +876,67 @@ export interface InsuranceEscrow extends BaseContract {
     "view"
   >;
 
+  getPoliciesByLocation: TypedContractMethod<
+    [locationId: string],
+    [bigint[]],
+    "view"
+  >;
+
   getPolicy: TypedContractMethod<
     [policyId: BigNumberish],
     [InsuranceEscrow.PolicyStructOutput],
     "view"
   >;
+
+  getPremiumLock: TypedContractMethod<
+    [quoteId: BigNumberish],
+    [
+      [string, bigint, bigint] & {
+        farmer: string;
+        amount: bigint;
+        state: bigint;
+      }
+    ],
+    "view"
+  >;
+
+  getQuoteLock: TypedContractMethod<
+    [quoteId: BigNumberish],
+    [
+      [string, bigint, bigint] & {
+        underwriter: string;
+        amount: bigint;
+        state: bigint;
+      }
+    ],
+    "view"
+  >;
+
+  getUnderwriterCapitalAccount: TypedContractMethod<
+    [underwriter: AddressLike],
+    [
+      [bigint, bigint, bigint] & {
+        deposited: bigint;
+        locked: bigint;
+        available: bigint;
+      }
+    ],
+    "view"
+  >;
+
+  lockCapitalForQuote: TypedContractMethod<
+    [quoteId: BigNumberish, amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
+
+  lockPremiumForQuote: TypedContractMethod<
+    [quoteId: BigNumberish],
+    [void],
+    "payable"
+  >;
+
+  lockedReserve: TypedContractMethod<[], [bigint], "view">;
 
   oracle: TypedContractMethod<[], [string], "view">;
 
@@ -417,27 +948,33 @@ export interface InsuranceEscrow extends BaseContract {
       [
         string,
         string,
-        bigint,
-        bigint,
-        bigint,
-        bigint,
-        bigint,
+        string,
         string,
         bigint,
         bigint,
-        boolean
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        boolean,
+        bigint
       ] & {
-        insurer: string;
-        insured: string;
-        coverageAmount: bigint;
+        user: string;
+        underwriter: string;
+        locationId: string;
+        cropType: string;
+        thresholdScore: bigint;
+        emergencyRain24h: bigint;
         premiumAmount: bigint;
-        durationSeconds: bigint;
+        payoutAmount: bigint;
         startTime: bigint;
         endTime: bigint;
-        location: string;
-        windSpeedKmh: bigint;
+        lastOracleUpdateAt: bigint;
+        lastRiskScore: bigint;
+        payoutTriggered: boolean;
         state: bigint;
-        eventOccurred: boolean;
       }
     ],
     "view"
@@ -445,8 +982,14 @@ export interface InsuranceEscrow extends BaseContract {
 
   policyCount: TypedContractMethod<[], [bigint], "view">;
 
-  resolvePolicy: TypedContractMethod<
-    [policyId: BigNumberish, eventOccurred: boolean],
+  releasePremiumForQuote: TypedContractMethod<
+    [quoteId: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
+
+  releaseQuoteCapital: TypedContractMethod<
+    [quoteId: BigNumberish],
     [void],
     "nonpayable"
   >;
@@ -457,9 +1000,13 @@ export interface InsuranceEscrow extends BaseContract {
     "nonpayable"
   >;
 
-  setVerified: TypedContractMethod<
-    [user: AddressLike, verified: boolean],
-    [void],
+  sharedPoolBalance: TypedContractMethod<[], [bigint], "view">;
+
+  sharedPoolLockedReserve: TypedContractMethod<[], [bigint], "view">;
+
+  submitWeatherReport: TypedContractMethod<
+    [policyId: BigNumberish, report: InsuranceEscrow.WeatherReportStruct],
+    [boolean],
     "nonpayable"
   >;
 
@@ -469,36 +1016,85 @@ export interface InsuranceEscrow extends BaseContract {
     "nonpayable"
   >;
 
-  verifiedUsers: TypedContractMethod<[arg0: AddressLike], [boolean], "view">;
+  withdrawUnderwriterCapital: TypedContractMethod<
+    [amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
   ): T;
 
   getFunction(
-    nameOrSignature: "acceptPolicy"
-  ): TypedContractMethod<[policyId: BigNumberish], [void], "payable">;
+    nameOrSignature: "DEFAULT_EMERGENCY_RAIN_24H"
+  ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
-    nameOrSignature: "cancelOffer"
+    nameOrSignature: "DEFAULT_THRESHOLD_SCORE"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "availableLiquidity"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "availableUnderwriterCapital"
+  ): TypedContractMethod<[underwriter: AddressLike], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "cancelPolicy"
   ): TypedContractMethod<[policyId: BigNumberish], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "createPolicyOffer"
+    nameOrSignature: "createPolicy"
   ): TypedContractMethod<
     [
-      premiumAmount: BigNumberish,
-      durationSeconds: BigNumberish,
-      location: string,
-      windSpeedKmh: BigNumberish
+      user: AddressLike,
+      locationId: string,
+      cropType: string,
+      thresholdScore: BigNumberish,
+      emergencyRain24h: BigNumberish,
+      payoutAmount: BigNumberish,
+      startTime: BigNumberish,
+      endTime: BigNumberish
     ],
     [bigint],
-    "payable"
+    "nonpayable"
   >;
   getFunction(
-    nameOrSignature: "finalizeExpiredPolicy"
+    nameOrSignature: "createPolicyFromQuote"
+  ): TypedContractMethod<
+    [
+      quoteId: BigNumberish,
+      user: AddressLike,
+      locationId: string,
+      cropType: string,
+      thresholdScore: BigNumberish,
+      emergencyRain24h: BigNumberish,
+      startTime: BigNumberish,
+      endTime: BigNumberish
+    ],
+    [bigint],
+    "nonpayable"
+  >;
+  getFunction(
+    nameOrSignature: "expirePolicy"
   ): TypedContractMethod<[policyId: BigNumberish], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "fundPool"
+  ): TypedContractMethod<[], [void], "payable">;
+  getFunction(
+    nameOrSignature: "fundUnderwriterCapital"
+  ): TypedContractMethod<[], [void], "payable">;
+  getFunction(
+    nameOrSignature: "getLatestReport"
+  ): TypedContractMethod<
+    [policyId: BigNumberish],
+    [InsuranceEscrow.WeatherReportStructOutput],
+    "view"
+  >;
   getFunction(
     nameOrSignature: "getPolicies"
   ): TypedContractMethod<[], [InsuranceEscrow.PolicyStructOutput[]], "view">;
+  getFunction(
+    nameOrSignature: "getPoliciesByLocation"
+  ): TypedContractMethod<[locationId: string], [bigint[]], "view">;
   getFunction(
     nameOrSignature: "getPolicy"
   ): TypedContractMethod<
@@ -506,6 +1102,58 @@ export interface InsuranceEscrow extends BaseContract {
     [InsuranceEscrow.PolicyStructOutput],
     "view"
   >;
+  getFunction(
+    nameOrSignature: "getPremiumLock"
+  ): TypedContractMethod<
+    [quoteId: BigNumberish],
+    [
+      [string, bigint, bigint] & {
+        farmer: string;
+        amount: bigint;
+        state: bigint;
+      }
+    ],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "getQuoteLock"
+  ): TypedContractMethod<
+    [quoteId: BigNumberish],
+    [
+      [string, bigint, bigint] & {
+        underwriter: string;
+        amount: bigint;
+        state: bigint;
+      }
+    ],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "getUnderwriterCapitalAccount"
+  ): TypedContractMethod<
+    [underwriter: AddressLike],
+    [
+      [bigint, bigint, bigint] & {
+        deposited: bigint;
+        locked: bigint;
+        available: bigint;
+      }
+    ],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "lockCapitalForQuote"
+  ): TypedContractMethod<
+    [quoteId: BigNumberish, amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
+    nameOrSignature: "lockPremiumForQuote"
+  ): TypedContractMethod<[quoteId: BigNumberish], [void], "payable">;
+  getFunction(
+    nameOrSignature: "lockedReserve"
+  ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "oracle"
   ): TypedContractMethod<[], [string], "view">;
@@ -520,27 +1168,33 @@ export interface InsuranceEscrow extends BaseContract {
       [
         string,
         string,
-        bigint,
-        bigint,
-        bigint,
-        bigint,
-        bigint,
+        string,
         string,
         bigint,
         bigint,
-        boolean
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        bigint,
+        boolean,
+        bigint
       ] & {
-        insurer: string;
-        insured: string;
-        coverageAmount: bigint;
+        user: string;
+        underwriter: string;
+        locationId: string;
+        cropType: string;
+        thresholdScore: bigint;
+        emergencyRain24h: bigint;
         premiumAmount: bigint;
-        durationSeconds: bigint;
+        payoutAmount: bigint;
         startTime: bigint;
         endTime: bigint;
-        location: string;
-        windSpeedKmh: bigint;
+        lastOracleUpdateAt: bigint;
+        lastRiskScore: bigint;
+        payoutTriggered: boolean;
         state: bigint;
-        eventOccurred: boolean;
       }
     ],
     "view"
@@ -549,29 +1203,41 @@ export interface InsuranceEscrow extends BaseContract {
     nameOrSignature: "policyCount"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
-    nameOrSignature: "resolvePolicy"
-  ): TypedContractMethod<
-    [policyId: BigNumberish, eventOccurred: boolean],
-    [void],
-    "nonpayable"
-  >;
+    nameOrSignature: "releasePremiumForQuote"
+  ): TypedContractMethod<[quoteId: BigNumberish], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "releaseQuoteCapital"
+  ): TypedContractMethod<[quoteId: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "setOracle"
   ): TypedContractMethod<[newOracle: AddressLike], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "setVerified"
+    nameOrSignature: "sharedPoolBalance"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "sharedPoolLockedReserve"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "submitWeatherReport"
   ): TypedContractMethod<
-    [user: AddressLike, verified: boolean],
-    [void],
+    [policyId: BigNumberish, report: InsuranceEscrow.WeatherReportStruct],
+    [boolean],
     "nonpayable"
   >;
   getFunction(
     nameOrSignature: "transferOwnership"
   ): TypedContractMethod<[newOwner: AddressLike], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "verifiedUsers"
-  ): TypedContractMethod<[arg0: AddressLike], [boolean], "view">;
+    nameOrSignature: "withdrawUnderwriterCapital"
+  ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
+  getEvent(
+    key: "LiquidityAdded"
+  ): TypedContractEvent<
+    LiquidityAddedEvent.InputTuple,
+    LiquidityAddedEvent.OutputTuple,
+    LiquidityAddedEvent.OutputObject
+  >;
   getEvent(
     key: "OracleUpdated"
   ): TypedContractEvent<
@@ -587,13 +1253,6 @@ export interface InsuranceEscrow extends BaseContract {
     OwnershipTransferredEvent.OutputObject
   >;
   getEvent(
-    key: "PolicyAccepted"
-  ): TypedContractEvent<
-    PolicyAcceptedEvent.InputTuple,
-    PolicyAcceptedEvent.OutputTuple,
-    PolicyAcceptedEvent.OutputObject
-  >;
-  getEvent(
     key: "PolicyCancelled"
   ): TypedContractEvent<
     PolicyCancelledEvent.InputTuple,
@@ -601,29 +1260,103 @@ export interface InsuranceEscrow extends BaseContract {
     PolicyCancelledEvent.OutputObject
   >;
   getEvent(
-    key: "PolicyOffered"
+    key: "PolicyCreated"
   ): TypedContractEvent<
-    PolicyOfferedEvent.InputTuple,
-    PolicyOfferedEvent.OutputTuple,
-    PolicyOfferedEvent.OutputObject
+    PolicyCreatedEvent.InputTuple,
+    PolicyCreatedEvent.OutputTuple,
+    PolicyCreatedEvent.OutputObject
   >;
   getEvent(
-    key: "PolicyResolved"
+    key: "PolicyExpired"
   ): TypedContractEvent<
-    PolicyResolvedEvent.InputTuple,
-    PolicyResolvedEvent.OutputTuple,
-    PolicyResolvedEvent.OutputObject
+    PolicyExpiredEvent.InputTuple,
+    PolicyExpiredEvent.OutputTuple,
+    PolicyExpiredEvent.OutputObject
   >;
   getEvent(
-    key: "VerifiedUpdated"
+    key: "PolicyPaidOut"
   ): TypedContractEvent<
-    VerifiedUpdatedEvent.InputTuple,
-    VerifiedUpdatedEvent.OutputTuple,
-    VerifiedUpdatedEvent.OutputObject
+    PolicyPaidOutEvent.InputTuple,
+    PolicyPaidOutEvent.OutputTuple,
+    PolicyPaidOutEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuoteCapitalConverted"
+  ): TypedContractEvent<
+    QuoteCapitalConvertedEvent.InputTuple,
+    QuoteCapitalConvertedEvent.OutputTuple,
+    QuoteCapitalConvertedEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuoteCapitalLocked"
+  ): TypedContractEvent<
+    QuoteCapitalLockedEvent.InputTuple,
+    QuoteCapitalLockedEvent.OutputTuple,
+    QuoteCapitalLockedEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuoteCapitalReleased"
+  ): TypedContractEvent<
+    QuoteCapitalReleasedEvent.InputTuple,
+    QuoteCapitalReleasedEvent.OutputTuple,
+    QuoteCapitalReleasedEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuotePremiumConverted"
+  ): TypedContractEvent<
+    QuotePremiumConvertedEvent.InputTuple,
+    QuotePremiumConvertedEvent.OutputTuple,
+    QuotePremiumConvertedEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuotePremiumLocked"
+  ): TypedContractEvent<
+    QuotePremiumLockedEvent.InputTuple,
+    QuotePremiumLockedEvent.OutputTuple,
+    QuotePremiumLockedEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuotePremiumReleased"
+  ): TypedContractEvent<
+    QuotePremiumReleasedEvent.InputTuple,
+    QuotePremiumReleasedEvent.OutputTuple,
+    QuotePremiumReleasedEvent.OutputObject
+  >;
+  getEvent(
+    key: "UnderwriterCapitalDeposited"
+  ): TypedContractEvent<
+    UnderwriterCapitalDepositedEvent.InputTuple,
+    UnderwriterCapitalDepositedEvent.OutputTuple,
+    UnderwriterCapitalDepositedEvent.OutputObject
+  >;
+  getEvent(
+    key: "UnderwriterCapitalWithdrawn"
+  ): TypedContractEvent<
+    UnderwriterCapitalWithdrawnEvent.InputTuple,
+    UnderwriterCapitalWithdrawnEvent.OutputTuple,
+    UnderwriterCapitalWithdrawnEvent.OutputObject
+  >;
+  getEvent(
+    key: "WeatherReportSubmitted"
+  ): TypedContractEvent<
+    WeatherReportSubmittedEvent.InputTuple,
+    WeatherReportSubmittedEvent.OutputTuple,
+    WeatherReportSubmittedEvent.OutputObject
   >;
 
   filters: {
-    "OracleUpdated(address)": TypedContractEvent<
+    "LiquidityAdded(address,uint256)": TypedContractEvent<
+      LiquidityAddedEvent.InputTuple,
+      LiquidityAddedEvent.OutputTuple,
+      LiquidityAddedEvent.OutputObject
+    >;
+    LiquidityAdded: TypedContractEvent<
+      LiquidityAddedEvent.InputTuple,
+      LiquidityAddedEvent.OutputTuple,
+      LiquidityAddedEvent.OutputObject
+    >;
+
+    "OracleUpdated(address,address)": TypedContractEvent<
       OracleUpdatedEvent.InputTuple,
       OracleUpdatedEvent.OutputTuple,
       OracleUpdatedEvent.OutputObject
@@ -645,17 +1378,6 @@ export interface InsuranceEscrow extends BaseContract {
       OwnershipTransferredEvent.OutputObject
     >;
 
-    "PolicyAccepted(uint256,address,uint256,uint256)": TypedContractEvent<
-      PolicyAcceptedEvent.InputTuple,
-      PolicyAcceptedEvent.OutputTuple,
-      PolicyAcceptedEvent.OutputObject
-    >;
-    PolicyAccepted: TypedContractEvent<
-      PolicyAcceptedEvent.InputTuple,
-      PolicyAcceptedEvent.OutputTuple,
-      PolicyAcceptedEvent.OutputObject
-    >;
-
     "PolicyCancelled(uint256)": TypedContractEvent<
       PolicyCancelledEvent.InputTuple,
       PolicyCancelledEvent.OutputTuple,
@@ -667,37 +1389,136 @@ export interface InsuranceEscrow extends BaseContract {
       PolicyCancelledEvent.OutputObject
     >;
 
-    "PolicyOffered(uint256,address,uint256,uint256)": TypedContractEvent<
-      PolicyOfferedEvent.InputTuple,
-      PolicyOfferedEvent.OutputTuple,
-      PolicyOfferedEvent.OutputObject
+    "PolicyCreated(uint256,address,address,string,string,uint32,uint32,uint256,uint64,uint64)": TypedContractEvent<
+      PolicyCreatedEvent.InputTuple,
+      PolicyCreatedEvent.OutputTuple,
+      PolicyCreatedEvent.OutputObject
     >;
-    PolicyOffered: TypedContractEvent<
-      PolicyOfferedEvent.InputTuple,
-      PolicyOfferedEvent.OutputTuple,
-      PolicyOfferedEvent.OutputObject
-    >;
-
-    "PolicyResolved(uint256,bool,uint256,uint256)": TypedContractEvent<
-      PolicyResolvedEvent.InputTuple,
-      PolicyResolvedEvent.OutputTuple,
-      PolicyResolvedEvent.OutputObject
-    >;
-    PolicyResolved: TypedContractEvent<
-      PolicyResolvedEvent.InputTuple,
-      PolicyResolvedEvent.OutputTuple,
-      PolicyResolvedEvent.OutputObject
+    PolicyCreated: TypedContractEvent<
+      PolicyCreatedEvent.InputTuple,
+      PolicyCreatedEvent.OutputTuple,
+      PolicyCreatedEvent.OutputObject
     >;
 
-    "VerifiedUpdated(address,bool)": TypedContractEvent<
-      VerifiedUpdatedEvent.InputTuple,
-      VerifiedUpdatedEvent.OutputTuple,
-      VerifiedUpdatedEvent.OutputObject
+    "PolicyExpired(uint256)": TypedContractEvent<
+      PolicyExpiredEvent.InputTuple,
+      PolicyExpiredEvent.OutputTuple,
+      PolicyExpiredEvent.OutputObject
     >;
-    VerifiedUpdated: TypedContractEvent<
-      VerifiedUpdatedEvent.InputTuple,
-      VerifiedUpdatedEvent.OutputTuple,
-      VerifiedUpdatedEvent.OutputObject
+    PolicyExpired: TypedContractEvent<
+      PolicyExpiredEvent.InputTuple,
+      PolicyExpiredEvent.OutputTuple,
+      PolicyExpiredEvent.OutputObject
+    >;
+
+    "PolicyPaidOut(uint256,address,address,uint256,uint32,uint32)": TypedContractEvent<
+      PolicyPaidOutEvent.InputTuple,
+      PolicyPaidOutEvent.OutputTuple,
+      PolicyPaidOutEvent.OutputObject
+    >;
+    PolicyPaidOut: TypedContractEvent<
+      PolicyPaidOutEvent.InputTuple,
+      PolicyPaidOutEvent.OutputTuple,
+      PolicyPaidOutEvent.OutputObject
+    >;
+
+    "QuoteCapitalConverted(uint256,uint256,address,uint256)": TypedContractEvent<
+      QuoteCapitalConvertedEvent.InputTuple,
+      QuoteCapitalConvertedEvent.OutputTuple,
+      QuoteCapitalConvertedEvent.OutputObject
+    >;
+    QuoteCapitalConverted: TypedContractEvent<
+      QuoteCapitalConvertedEvent.InputTuple,
+      QuoteCapitalConvertedEvent.OutputTuple,
+      QuoteCapitalConvertedEvent.OutputObject
+    >;
+
+    "QuoteCapitalLocked(uint256,address,uint256)": TypedContractEvent<
+      QuoteCapitalLockedEvent.InputTuple,
+      QuoteCapitalLockedEvent.OutputTuple,
+      QuoteCapitalLockedEvent.OutputObject
+    >;
+    QuoteCapitalLocked: TypedContractEvent<
+      QuoteCapitalLockedEvent.InputTuple,
+      QuoteCapitalLockedEvent.OutputTuple,
+      QuoteCapitalLockedEvent.OutputObject
+    >;
+
+    "QuoteCapitalReleased(uint256,address,uint256)": TypedContractEvent<
+      QuoteCapitalReleasedEvent.InputTuple,
+      QuoteCapitalReleasedEvent.OutputTuple,
+      QuoteCapitalReleasedEvent.OutputObject
+    >;
+    QuoteCapitalReleased: TypedContractEvent<
+      QuoteCapitalReleasedEvent.InputTuple,
+      QuoteCapitalReleasedEvent.OutputTuple,
+      QuoteCapitalReleasedEvent.OutputObject
+    >;
+
+    "QuotePremiumConverted(uint256,uint256,address,uint256)": TypedContractEvent<
+      QuotePremiumConvertedEvent.InputTuple,
+      QuotePremiumConvertedEvent.OutputTuple,
+      QuotePremiumConvertedEvent.OutputObject
+    >;
+    QuotePremiumConverted: TypedContractEvent<
+      QuotePremiumConvertedEvent.InputTuple,
+      QuotePremiumConvertedEvent.OutputTuple,
+      QuotePremiumConvertedEvent.OutputObject
+    >;
+
+    "QuotePremiumLocked(uint256,address,uint256)": TypedContractEvent<
+      QuotePremiumLockedEvent.InputTuple,
+      QuotePremiumLockedEvent.OutputTuple,
+      QuotePremiumLockedEvent.OutputObject
+    >;
+    QuotePremiumLocked: TypedContractEvent<
+      QuotePremiumLockedEvent.InputTuple,
+      QuotePremiumLockedEvent.OutputTuple,
+      QuotePremiumLockedEvent.OutputObject
+    >;
+
+    "QuotePremiumReleased(uint256,address,uint256)": TypedContractEvent<
+      QuotePremiumReleasedEvent.InputTuple,
+      QuotePremiumReleasedEvent.OutputTuple,
+      QuotePremiumReleasedEvent.OutputObject
+    >;
+    QuotePremiumReleased: TypedContractEvent<
+      QuotePremiumReleasedEvent.InputTuple,
+      QuotePremiumReleasedEvent.OutputTuple,
+      QuotePremiumReleasedEvent.OutputObject
+    >;
+
+    "UnderwriterCapitalDeposited(address,uint256,uint256)": TypedContractEvent<
+      UnderwriterCapitalDepositedEvent.InputTuple,
+      UnderwriterCapitalDepositedEvent.OutputTuple,
+      UnderwriterCapitalDepositedEvent.OutputObject
+    >;
+    UnderwriterCapitalDeposited: TypedContractEvent<
+      UnderwriterCapitalDepositedEvent.InputTuple,
+      UnderwriterCapitalDepositedEvent.OutputTuple,
+      UnderwriterCapitalDepositedEvent.OutputObject
+    >;
+
+    "UnderwriterCapitalWithdrawn(address,uint256,uint256)": TypedContractEvent<
+      UnderwriterCapitalWithdrawnEvent.InputTuple,
+      UnderwriterCapitalWithdrawnEvent.OutputTuple,
+      UnderwriterCapitalWithdrawnEvent.OutputObject
+    >;
+    UnderwriterCapitalWithdrawn: TypedContractEvent<
+      UnderwriterCapitalWithdrawnEvent.InputTuple,
+      UnderwriterCapitalWithdrawnEvent.OutputTuple,
+      UnderwriterCapitalWithdrawnEvent.OutputObject
+    >;
+
+    "WeatherReportSubmitted(uint256,uint64,uint32,uint32,bool)": TypedContractEvent<
+      WeatherReportSubmittedEvent.InputTuple,
+      WeatherReportSubmittedEvent.OutputTuple,
+      WeatherReportSubmittedEvent.OutputObject
+    >;
+    WeatherReportSubmitted: TypedContractEvent<
+      WeatherReportSubmittedEvent.InputTuple,
+      WeatherReportSubmittedEvent.OutputTuple,
+      WeatherReportSubmittedEvent.OutputObject
     >;
   };
 }

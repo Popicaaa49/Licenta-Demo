@@ -8,7 +8,7 @@ interface WalletConnectProps {
 }
 
 const truncateAddress = (address: string) =>
-  `${address.slice(0, 6)}…${address.slice(address.length - 4)}`;
+  `${address.slice(0, 6)}...${address.slice(address.length - 4)}`;
 
 const WalletConnect: React.FC<WalletConnectProps> = ({
   account,
@@ -21,7 +21,7 @@ const WalletConnect: React.FC<WalletConnectProps> = ({
 
   const handleConnect = async () => {
     if (!window.ethereum) {
-      setError("Instalează MetaMask pentru a continua.");
+      setError("Instaleaza MetaMask pentru a continua.");
       return;
     }
 
@@ -46,7 +46,7 @@ const WalletConnect: React.FC<WalletConnectProps> = ({
       const message =
         connectError instanceof Error
           ? connectError.message
-          : "Conectarea la portofel a eșuat.";
+          : "Conectarea la portofel a esuat.";
       setError(message);
     } finally {
       setIsConnecting(false);
@@ -71,7 +71,7 @@ const WalletConnect: React.FC<WalletConnectProps> = ({
               type="button"
               onClick={handleDisconnect}
             >
-              Deconectează
+              Deconecteaza
             </button>
           ) : null}
         </div>
@@ -79,7 +79,7 @@ const WalletConnect: React.FC<WalletConnectProps> = ({
         {account ? (
           <div className="wallet-card__details">
             <strong className="wallet-account">{truncateAddress(account)}</strong>
-            <span className="wallet-network">{networkLabel || "Rețea necunoscută"}</span>
+            <span className="wallet-network">{networkLabel || "Retea necunoscuta"}</span>
           </div>
         ) : (
           <button
@@ -88,11 +88,11 @@ const WalletConnect: React.FC<WalletConnectProps> = ({
             onClick={handleConnect}
             disabled={isConnecting}
           >
-            {isConnecting ? "Se conectează..." : "Conectează MetaMask"}
+            {isConnecting ? "Se conecteaza..." : "Conecteaza MetaMask"}
           </button>
         )}
       </div>
-      {error && <p className="status-message status-message--error">{error}</p>}
+      {error ? <p className="status-message status-message--error">{error}</p> : null}
     </div>
   );
 };

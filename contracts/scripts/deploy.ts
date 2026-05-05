@@ -8,6 +8,7 @@ const GAME_ADDRESSES_FILE = path.join(CONTRACTS_DIR, "contractAddress.json");
 const GAME_ABI_FILE = path.join(CONTRACTS_DIR, "GameEscrow.json");
 const INSURANCE_ADDRESSES_FILE = path.join(CONTRACTS_DIR, "insuranceAddress.json");
 const INSURANCE_ABI_FILE = path.join(CONTRACTS_DIR, "InsuranceEscrow.json");
+const DEFAULT_INSURANCE_POOL_ETH = "10";
 
 type FrontendContractConfig = {
   addressFile: string;
@@ -52,9 +53,13 @@ async function saveFrontendFiles(
 }
 
 async function main() {
-  const [deployer] = await ethers.getSigners();
+  const [deployer, oracleSigner] = await ethers.getSigners();
+  const initialPoolEth =
+    process.env.INITIAL_INSURANCE_POOL_ETH?.trim() || DEFAULT_INSURANCE_POOL_ETH;
+  const initialPoolWei = ethers.parseEther(initialPoolEth);
 
   console.log("Deploying contract with account:", deployer.address);
+  console.log("Oracle account:", oracleSigner.address);
   const balance = await deployer.provider.getBalance(deployer.address);
   console.log("Account balance:", ethers.formatEther(balance), "ETH");
 
@@ -66,11 +71,14 @@ async function main() {
   console.log("GameEscrow deployed to:", contractAddress);
 
   const InsuranceEscrow = await ethers.getContractFactory("InsuranceEscrow");
-  const insurance = await InsuranceEscrow.deploy(deployer.address);
+  const insurance = await InsuranceEscrow.deploy(oracleSigner.address, {
+    value: initialPoolWei,
+  });
   await insurance.waitForDeployment();
 
   const insuranceAddress = await insurance.getAddress();
   console.log("InsuranceEscrow deployed to:", insuranceAddress);
+  console.log("Initial insurance liquidity:", initialPoolEth, "ETH");
 
   const network = await deployer.provider?.getNetwork();
   if (!network) {
