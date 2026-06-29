@@ -36,7 +36,9 @@ Copy `.env.example` to `.env` and update:
 
 ```bash
 npm install
+npm run db:migrate
 npm run build
+npm test
 npm run dev
 npm run oracle
 npm run payout-worker
@@ -60,11 +62,12 @@ npm run payout-worker
 ## Demo flow
 
 1. Deploy the updated Solidity contract on Hardhat localhost.
-2. Apply `sql/schema.sql` in PostgreSQL.
+2. Start PostgreSQL with `npm run db:up`; for an existing database, apply pending changes with `npm run db:migrate`.
 3. Load `sql/seed.sql` if you want sample data.
 4. Start the backend with `npm run dev`.
-5. Start the backend with `npm run dev`.
-6. Start the oracle poller with `npm run oracle`.
-7. Start the payout worker with `npm run payout-worker`.
+5. Start the oracle poller with `npm run oracle`.
+6. Start the payout worker with `npm run payout-worker`.
+
+Every new quote receives immutable ETH settlement terms, a trigger configuration and an expiry timestamp. Deploy the current `InsuranceEscrow` contract before creating new quotes, because it registers and validates these terms on-chain.
 
 The oracle component only fetches and normalizes weather data. The payout decision is derived off-chain by the risk engine, persisted as a payout job, and enforced on-chain by the dedicated payout worker.

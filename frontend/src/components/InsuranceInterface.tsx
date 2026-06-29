@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import {
   CropReference,
@@ -19,6 +19,17 @@ interface InsuranceInterfaceProps {
 
 const BACKEND_BASE_URL =
   process.env.REACT_APP_BACKEND_URL?.trim() || "http://127.0.0.1:4000";
+
+const buildInsuranceRequestDetailUrl = (
+  requestId: number,
+  viewerAddress?: string | null
+) => {
+  const query = viewerAddress
+    ? `?viewerAddress=${encodeURIComponent(viewerAddress)}`
+    : "";
+  return `${BACKEND_BASE_URL}/insurance-request/${requestId}${query}`;
+};
+
 const GEOJSON_PLACEHOLDER = `{
   "type": "Polygon",
   "coordinates": [[
@@ -184,26 +195,41 @@ const normalizeRequest = (request: Partial<InsuranceRequest>): InsuranceRequest 
           payoutCapEur: Number(request.latestQuote.payoutCapEur ?? 0),
           premiumRate: Number(request.latestQuote.premiumRate ?? 0),
           premiumAmountEur: Number(request.latestQuote.premiumAmountEur ?? 0),
+          triggerThresholdScore: Number(request.latestQuote.triggerThresholdScore ?? 8),
+          triggerEmergencyRain24h: Number(request.latestQuote.triggerEmergencyRain24h ?? 80),
+          riskModelVersion: String(request.latestQuote.riskModelVersion ?? "unknown"),
+          expiresAt: String(request.latestQuote.expiresAt ?? ""),
           breakdown:
             request.latestQuote.breakdown &&
             typeof request.latestQuote.breakdown === "object"
               ? request.latestQuote.breakdown
               : {},
-          livePricing:
-            request.latestQuote.livePricing &&
-            typeof request.latestQuote.livePricing === "object"
-              ? {
-                  ethEurRate: Number(request.latestQuote.livePricing.ethEurRate ?? 0),
-                  capitalLockEth: Number(request.latestQuote.livePricing.capitalLockEth ?? 0),
-                  capitalLockWei: String(request.latestQuote.livePricing.capitalLockWei ?? ""),
-                  premiumLockEth: Number(request.latestQuote.livePricing.premiumLockEth ?? 0),
-                  premiumLockWei: String(request.latestQuote.livePricing.premiumLockWei ?? ""),
-                  rateSource: String(request.latestQuote.livePricing.rateSource ?? ""),
-                  fetchedAt: String(request.latestQuote.livePricing.fetchedAt ?? ""),
-                }
-              : null,
           createdAt: String(request.latestQuote.createdAt ?? ""),
           updatedAt: String(request.latestQuote.updatedAt ?? ""),
+        }
+      : null,
+  latestSettlement:
+    request.latestSettlement && typeof request.latestSettlement === "object"
+      ? {
+          id: Number(request.latestSettlement.id ?? 0),
+          quoteId: Number(request.latestSettlement.quoteId ?? 0),
+          status: String(request.latestSettlement.status ?? "unknown"),
+          underwriterAddress:
+            request.latestSettlement.underwriterAddress === null
+              ? null
+              : String(request.latestSettlement.underwriterAddress ?? ""),
+          premiumLockWei: String(request.latestSettlement.premiumLockWei ?? "0"),
+          payoutCapWei: String(request.latestSettlement.payoutCapWei ?? "0"),
+          ethEurRate: Number(request.latestSettlement.ethEurRate ?? 0),
+          rateSource: String(request.latestSettlement.rateSource ?? "unknown"),
+          rateFetchedAt: String(request.latestSettlement.rateFetchedAt ?? ""),
+          expiresAt: String(request.latestSettlement.expiresAt ?? ""),
+          termsTxHash:
+            request.latestSettlement.termsTxHash === null
+              ? null
+              : String(request.latestSettlement.termsTxHash ?? ""),
+          createdAt: String(request.latestSettlement.createdAt ?? ""),
+          updatedAt: String(request.latestSettlement.updatedAt ?? ""),
         }
       : null,
   latestPremiumPayment:
@@ -249,22 +275,23 @@ const normalizeRequest = (request: Partial<InsuranceRequest>): InsuranceRequest 
       : null,
 });
 
-const extractLivePricing = (request: InsuranceRequest) => {
-  const livePricing =
-    request.latestQuote?.livePricing &&
-    typeof request.latestQuote.livePricing === "object"
-      ? request.latestQuote.livePricing
-      : null;
+const extractSettlementTerms = (request: InsuranceRequest) => {
+  const settlement = request.latestSettlement;
+  const toEth = (value: string | undefined) => {
+    try {
+      return Number(ethers.formatEther(BigInt(value ?? "0")));
+    } catch {
+      return null;
+    }
+  };
 
   return {
-    ethEurRate:
-      typeof livePricing?.ethEurRate === "number" ? livePricing.ethEurRate : null,
-    capitalLockEth:
-      typeof livePricing?.capitalLockEth === "number" ? livePricing.capitalLockEth : null,
-    premiumLockEth:
-      typeof livePricing?.premiumLockEth === "number" ? livePricing.premiumLockEth : null,
-    fetchedAt: typeof livePricing?.fetchedAt === "string" ? livePricing.fetchedAt : null,
-    rateSource: typeof livePricing?.rateSource === "string" ? livePricing.rateSource : null,
+    ethEurRate: settlement?.ethEurRate ?? null,
+    capitalLockEth: toEth(settlement?.payoutCapWei),
+    premiumLockEth: toEth(settlement?.premiumLockWei),
+    fetchedAt: settlement?.rateFetchedAt ?? null,
+    expiresAt: settlement?.expiresAt ?? null,
+    rateSource: settlement?.rateSource ?? null,
   };
 };
 
@@ -302,8 +329,6 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [cropType, setCropType] = useState("wheat");
   const [areaHa, setAreaHa] = useState("");
-  const [thresholdScore, setThresholdScore] = useState("8");
-  const [emergencyRain24h, setEmergencyRain24h] = useState("80");
   const [coverageDays, setCoverageDays] = useState("30");
   const [underwriterFundAmount, setUnderwriterFundAmount] = useState("1");
   const [status, setStatus] = useState<StatusPayload | null>(null);
@@ -402,21 +427,40 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   }, [areaHaValue, expectedRevenuePerHa, selectedCrop]);
 
   const marketplaceRequests = useMemo(
-    () =>
-      insuranceRequests.filter((request) =>
-        ["awaiting_underwriter", "awaiting_premium", "ready_for_activation"].includes(
-          request.status
-        )
-      ),
-    [insuranceRequests]
+    () => {
+      const normalizedAccount =
+        account && ethers.isAddress(account) ? account.toLowerCase() : null;
+
+      return insuranceRequests.filter((request) => {
+        if (["quoted", "awaiting_farmer_lock", "awaiting_underwriter"].includes(request.status)) {
+          return true;
+        }
+
+        if (request.status !== "ready_for_activation" || !normalizedAccount) {
+          return false;
+        }
+
+        const underwriterAddress = request.latestSettlement?.underwriterAddress;
+        const isRequestFarmer = request.farmerAddress.toLowerCase() === normalizedAccount;
+        const isRequestUnderwriter =
+          !!underwriterAddress &&
+          ethers.isAddress(underwriterAddress) &&
+          underwriterAddress.toLowerCase() === normalizedAccount;
+
+        return isRequestFarmer || isRequestUnderwriter;
+      });
+    },
+    [account, insuranceRequests]
   );
 
   const filteredMarketplaceRequests = useMemo(() => {
     switch (activeMarketplaceFilter) {
       case "open":
-        return marketplaceRequests.filter((request) => request.latestQuote?.status === "open");
+        return marketplaceRequests.filter((request) =>
+          ["quoted", "awaiting_farmer_lock"].includes(request.status)
+        );
       case "locked":
-        return marketplaceRequests.filter((request) => request.latestQuote?.status === "locked");
+        return marketplaceRequests.filter((request) => !!request.latestSettlement);
       case "ready":
         return marketplaceRequests.filter(
           (request) => request.status === "ready_for_activation"
@@ -465,7 +509,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       return {
         title: "Request Coverage",
         description:
-          "Configurezi parcela si cererea. Dupa ofertare, fermierul blocheaza premium-ul iar underwriter-ul blocheaza capitalul.",
+          "Configurezi parcela si obtii o oferta comerciala in EUR. Fondurile sunt blocate doar dupa pregatirea settlement-ului ETH.",
       };
     }
 
@@ -473,14 +517,14 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       return {
         title: "Marketplace & Capital",
         description:
-          "Aici apar doar cererile de underwriting. Politile activate se urmaresc separat in Policies.",
+          "Aici furnizorul selecteaza o oferta comerciala si pregateste settlement-ul ETH la cursul curent.",
       };
     }
 
     return {
-      title: "Asigurari parametrice agricole",
-      description:
-        "Produsul principal urmeaza fluxul request -> premium lock -> capital lock -> activare. Marketplace-ul listeaza cereri, iar tab-ul Policies urmareste acoperirile activate.",
+        title: "Asigurari parametrice agricole",
+        description:
+          "Fluxul este request in EUR -> settlement ETH -> premium lock -> capital lock -> activare. Marketplace-ul listeaza ofertele comerciale, iar tab-ul Policies urmareste acoperirile activate.",
     };
   }, [mode]);
 
@@ -523,11 +567,12 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
     }
   };
 
-  const loadInsuranceRequests = async () => {
+  const loadInsuranceRequests = useCallback(async () => {
     try {
       setIsLoadingRequests(true);
       setRequestLoadError(null);
-      const response = await fetch(`${BACKEND_BASE_URL}/insurance-request`);
+      const query = account ? `?viewerAddress=${encodeURIComponent(account)}` : "";
+      const response = await fetch(`${BACKEND_BASE_URL}/insurance-request${query}`);
       if (!response.ok) {
         throw new Error("Nu am putut incarca cererile de asigurare.");
       }
@@ -542,7 +587,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
     } finally {
       setIsLoadingRequests(false);
     }
-  };
+  }, [account]);
 
   useEffect(() => {
     if (!walletConnected) {
@@ -595,8 +640,11 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   useEffect(() => {
     void loadLocations();
     void loadCropCatalog();
-    void loadInsuranceRequests();
   }, []);
+
+  useEffect(() => {
+    void loadInsuranceRequests();
+  }, [loadInsuranceRequests, walletConnected]);
 
   useEffect(() => {
     if (cropCatalog.length === 0) {
@@ -697,7 +745,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       throw new Error("Conecteaza wallet-ul fermierului pentru a bloca premium-ul.");
     }
 
-    const requestResponse = await fetch(`${BACKEND_BASE_URL}/insurance-request/${requestId}`);
+    const requestResponse = await fetch(buildInsuranceRequestDetailUrl(requestId, account));
     const requestPayload = (await requestResponse.json()) as Partial<InsuranceRequest> & {
       error?: string;
     };
@@ -706,17 +754,17 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
     }
 
     const freshRequest = normalizeRequest(requestPayload);
-    const premiumLockEth = freshRequest.latestQuote?.livePricing?.premiumLockEth;
-    if (!freshRequest.latestQuote || premiumLockEth === null || premiumLockEth === undefined) {
+    const premiumLockWei = freshRequest.latestSettlement?.premiumLockWei;
+    if (!freshRequest.latestSettlement || !premiumLockWei || premiumLockWei === "0") {
       throw new Error(
-        "Nu am putut calcula live suma necesara pentru premium. Reincearca dupa ce backend-ul isi revine."
+        "Nu exista o sesiune de settlement activa pentru aceasta oferta."
       );
     }
 
-    const parsedAmountWei = ethers.parseEther(premiumLockEth.toFixed(6));
+    const parsedAmountWei = BigInt(premiumLockWei);
 
     const { contract } = await getInsuranceContract();
-    const tx = await contract.lockPremiumForQuote(BigInt(freshRequest.latestQuote.id), {
+    const tx = await contract.lockPremiumForQuote(BigInt(freshRequest.latestSettlement.id), {
       value: parsedAmountWei,
       gasLimit: 180_000,
     });
@@ -744,8 +792,8 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
 
     return {
       txHash: tx.hash,
-      lockedAmountEth: premiumLockEth.toFixed(6),
-      ethEurRate: freshRequest.latestQuote.livePricing?.ethEurRate ?? null,
+      lockedAmountEth: ethers.formatEther(parsedAmountWei),
+      ethEurRate: freshRequest.latestSettlement.ethEurRate,
     };
   };
 
@@ -753,7 +801,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
     if (!walletConnected || !account) {
       setStatus({
         type: "warning",
-        message: "Conecteaza wallet-ul fermierului pentru a trimite cererea si a bloca premium-ul.",
+        message: "Conecteaza wallet-ul fermierului pentru a trimite cererea de asigurare.",
       });
       return;
     }
@@ -769,7 +817,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
     if (farmerAddress.toLowerCase() !== account.toLowerCase()) {
       setStatus({
         type: "error",
-        message: "Cererea poate fi listata doar de wallet-ul fermierului care blocheaza premium-ul.",
+        message: "Cererea poate fi creata doar de wallet-ul fermierului asigurat.",
       });
       return;
     }
@@ -778,7 +826,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       setIsRequestingQuote(true);
       setStatus({
         type: "success",
-        message: "Se calculeaza oferta si se pregateste lock-ul integral al premium-ului...",
+        message: "Se calculeaza oferta comerciala in EUR...",
       });
 
       const { startTime, endTime } = buildCoverageWindow();
@@ -836,27 +884,9 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
         throw new Error("Backend-ul nu a intors request-ul si quote-ul create.");
       }
 
-      const createdRequestId = Number(responsePayload.request.id);
-      let premiumLockResult: Awaited<ReturnType<typeof performPremiumLock>> | null = null;
-
-      try {
-        premiumLockResult = await performPremiumLock(createdRequestId);
-      } catch (premiumLockError) {
-        await loadInsuranceRequests();
-        const message =
-          premiumLockError instanceof Error
-            ? premiumLockError.message
-            : "Blocarea premium-ului a esuat.";
-        setStatus({
-          type: "error",
-          message: `Oferta pentru cererea #${createdRequestId} a fost calculata, dar premium-ul nu a fost blocat. Cererea ramane in asteptarea fermierului si nu intra in marketplace pana nu finalizezi lock-ul. Detaliu: ${message}`,
-        });
-        return;
-      }
-
       setStatus({
         type: "success",
-        message: `Cererea a fost listata in marketplace. Payout recomandat: ${payoutLabel}, prima: ${premiumLabel}, risc: ${riskTierLabel}. Premium-ul fermierului a fost blocat automat cu ${premiumLockResult.lockedAmountEth} ETH${premiumLockResult.ethEurRate ? ` la ${premiumLockResult.ethEurRate} EUR/ETH` : ""}.`,
+        message: `Oferta pentru cerere a fost listata in marketplace. Payout: ${payoutLabel}, prima: ${premiumLabel}, risc: ${riskTierLabel}. Oferta este exprimata in EUR; settlement-ul ETH va fi pregatit doar dupa selectarea unui furnizor de capital.`,
       });
 
       await Promise.all([loadLocations(), loadInsuranceRequests()]);
@@ -865,6 +895,42 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       setStatus({ type: "error", message });
     } finally {
       setIsRequestingQuote(false);
+    }
+  };
+
+  const handlePrepareSettlement = async (request: InsuranceRequest) => {
+    if (!walletConnected) {
+      setStatus({ type: "warning", message: "Conecteaza wallet-ul pentru a pregati settlement-ul." });
+      return;
+    }
+
+    try {
+      setLockingRequestId(request.id);
+      setStatus({ type: "success", message: "Se actualizeaza cursul ETH/EUR si se pregatesc termenii settlement-ului..." });
+
+      const response = await fetch(
+        `${BACKEND_BASE_URL}/insurance-request/${request.id}/prepare-settlement`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const payload = (await response.json()) as { error?: string; latestSettlement?: unknown };
+      if (!response.ok) {
+        throw new Error(payload.error || "Pregatirea settlement-ului a esuat.");
+      }
+
+      setStatus({
+        type: "success",
+        message: "Settlement-ul ETH a fost fixat temporar. Fermierul poate bloca premium-ul, apoi furnizorul poate bloca capitalul.",
+      });
+      await loadInsuranceRequests();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Pregatirea settlement-ului a esuat.";
+      setStatus({ type: "error", message });
+    } finally {
+      setLockingRequestId(null);
     }
   };
 
@@ -968,12 +1034,9 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
 
     try {
       setLockingRequestId(request.id);
-      setStatus({
-        type: "success",
-        message: "Se calculeaza cursul live si se blocheaza capitalul necesar...",
-      });
+      setStatus({ type: "success", message: "Se blocheaza capitalul fixat în ofertă..." });
 
-      const quoteResponse = await fetch(`${BACKEND_BASE_URL}/insurance-request/${request.id}`);
+      const quoteResponse = await fetch(buildInsuranceRequestDetailUrl(request.id, account));
       const quotePayload = (await quoteResponse.json()) as Partial<InsuranceRequest> & {
         error?: string;
       };
@@ -982,18 +1045,22 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       }
 
       const freshRequest = normalizeRequest(quotePayload);
-      if (!freshRequest.latestQuote?.livePricing?.capitalLockEth) {
+      if (
+        !freshRequest.latestSettlement?.payoutCapWei ||
+        freshRequest.latestSettlement.payoutCapWei === "0"
+      ) {
         throw new Error(
-          "Nu am putut calcula live suma necesara in ETH. Reincearca dupa ce backend-ul isi revine."
+          "Oferta nu contine capitalul fixat necesar pentru activare."
         );
       }
 
-      const lockedAmountEth = freshRequest.latestQuote.livePricing.capitalLockEth.toFixed(6);
+      const lockedAmountWei = BigInt(freshRequest.latestSettlement.payoutCapWei);
+      const lockedAmountEth = ethers.formatEther(lockedAmountWei);
 
       const { contract } = await getInsuranceContract();
       const tx = await contract.lockCapitalForQuote(
-        BigInt(freshRequest.latestQuote.id),
-        ethers.parseEther(lockedAmountEth),
+        BigInt(freshRequest.latestSettlement.id),
+        lockedAmountWei,
         { gasLimit: 200_000 }
       );
       await tx.wait();
@@ -1007,7 +1074,6 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
           },
           body: JSON.stringify({
             underwriterAddress: account,
-            lockedAmountEth,
             transactionHash: tx.hash,
           }),
         }
@@ -1040,7 +1106,9 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   };
 
   const handleReleaseLockedCapital = async (request: InsuranceRequest) => {
-    if (!walletConnected || !account || !request.latestQuote) {
+    const settlement = request.latestSettlement;
+
+    if (!walletConnected || !account || !settlement) {
       setStatus({
         type: "warning",
         message: "Conecteaza portofelul care a blocat capitalul pentru a-l elibera.",
@@ -1053,7 +1121,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       setStatus({ type: "success", message: "Se elibereaza capitalul blocat..." });
 
       const { contract } = await getInsuranceContract();
-      const tx = await contract.releaseQuoteCapital(BigInt(request.latestQuote.id), {
+      const tx = await contract.releaseQuoteCapital(BigInt(settlement.id), {
         gasLimit: 180_000,
       });
       await tx.wait();
@@ -1099,7 +1167,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   };
 
   const handleLockPremium = async (request: InsuranceRequest) => {
-    if (!walletConnected || !account || !request.latestQuote) {
+    if (!walletConnected || !account || !request.latestSettlement) {
       setStatus({
         type: "warning",
         message: "Conecteaza wallet-ul fermierului pentru a bloca premium-ul.",
@@ -1129,7 +1197,9 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   };
 
   const handleReleaseLockedPremium = async (request: InsuranceRequest) => {
-    if (!walletConnected || !account || !request.latestQuote) {
+    const settlement = request.latestSettlement;
+
+    if (!walletConnected || !account || !settlement) {
       setStatus({
         type: "warning",
         message: "Conecteaza wallet-ul fermierului pentru a elibera premium-ul.",
@@ -1142,7 +1212,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
       setStatus({ type: "success", message: "Se elibereaza premium-ul blocat..." });
 
       const { contract } = await getInsuranceContract();
-      const tx = await contract.releasePremiumForQuote(BigInt(request.latestQuote.id), {
+      const tx = await contract.releasePremiumForQuote(BigInt(settlement.id), {
         gasLimit: 180_000,
       });
       await tx.wait();
@@ -1196,10 +1266,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          thresholdScore: Number(thresholdScore),
-          emergencyRain24h: Number(emergencyRain24h),
-        }),
+        body: JSON.stringify({}),
       });
 
       const payload = (await response.json()) as {
@@ -1238,8 +1305,9 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
   const marketplaceSummary = useMemo(
     () => ({
       total: marketplaceRequests.length,
-      open: marketplaceRequests.filter((request) => request.latestQuote?.status === "open")
-        .length,
+      open: marketplaceRequests.filter((request) =>
+        ["quoted", "awaiting_farmer_lock"].includes(request.status)
+      ).length,
       ready: marketplaceRequests.filter(
         (request) => request.status === "ready_for_activation"
       ).length,
@@ -1494,38 +1562,23 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                 <div className="coverage-section__header">
                   <h4>Trigger si escrow farmer</h4>
                   <p>
-                    Cererea intra in marketplace doar dupa ce fermierul blocheaza integral suma de
-                    premium in contract.
+                    Pragurile parametrice si sumele escrow sunt calculate de backend, fixate in
+                    oferta si inregistrate in smart contract inainte de blocarea fondurilor.
                   </p>
                 </div>
                 <div className="form-grid form-grid--insurance">
-                  <label className="form-field">
-                    <span>Threshold score</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={thresholdScore}
-                      onChange={(e) => setThresholdScore(e.target.value)}
-                    />
-                  </label>
-
-                  <label className="form-field">
-                    <span>Prag urgenta ploaie 24h (mm)</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={emergencyRain24h}
-                      onChange={(e) => setEmergencyRain24h(e.target.value)}
-                    />
-                  </label>
-
+                  <div className="form-field">
+                    <span>Configurație parametrică</span>
+                    <p className="field-hint">
+                      Valoarea trigger-ului este determinată de cultură, sezon și risk tier; nu
+                      poate fi modificată din interfață.
+                    </p>
+                  </div>
                   <div className="form-field">
                     <span>Premium lock initial</span>
                     <p className="field-hint">
-                      Nu se introduce manual. Dupa calcularea ofertei, backend-ul converteste prima
-                      din EUR in ETH la cursul live si blocheaza automat suma integrala.
+                      Prima este convertită în ETH o singură dată la generarea ofertei. Suma
+                      rezultată rămâne fixă până la expirarea ofertei.
                     </p>
                   </div>
                 </div>
@@ -1540,7 +1593,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                 >
                   {isRequestingQuote
                     ? "Se listeaza cererea..."
-                    : "Solicita oferta si blocheaza premium"}
+                    : "Solicita oferta"}
                 </button>
               </div>
             </div>
@@ -1571,16 +1624,8 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                     </strong>
                   </div>
                   <div>
-                    <span>Threshold score</span>
-                    <strong>{thresholdScore}</strong>
-                  </div>
-                  <div>
-                    <span>Urgenta ploaie 24h</span>
-                    <strong>{emergencyRain24h} mm</strong>
-                  </div>
-                  <div>
                     <span>Premium lock initial</span>
-                    <strong>calculat automat la curs live</strong>
+                    <strong>fixat automat în ofertă</strong>
                   </div>
                   <div>
                     <span>Locatie</span>
@@ -1639,24 +1684,24 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
               <div className="coverage-summary-card">
                 <span className="coverage-summary-card__eyebrow">Flux nou</span>
                 <div className="coverage-summary-note">
-                  <strong>1. Oferta se calculeaza si premium-ul se blocheaza</strong>
+                  <strong>1. Oferta comerciala este calculata</strong>
                   <p>
-                    Cererea devine listata doar dupa lock-ul integral al premium-ului. Fara acest
-                    pas, nu intra in marketplace.
+                    Cererea si valorile comerciale in EUR sunt publicate in marketplace pentru
+                    evaluarea furnizorilor de capital.
                   </p>
                 </div>
                 <div className="coverage-summary-note">
-                  <strong>2. Underwriter-ul vede doar cereri garantate</strong>
+                  <strong>2. Underwriter-ul pregateste settlement-ul ETH</strong>
                   <p>
-                    Marketplace-ul filtreaza cererile fara premium lock, deci underwriter-ul nu
-                    vede request-uri nefinantate de fermier.
+                    Pentru oferta selectata sunt fixate temporar cursul ETH/EUR si sumele necesare
+                    blocarii fondurilor.
                   </p>
                 </div>
                 <div className="coverage-summary-note">
-                  <strong>3. Underwriter-ul blocheaza capitalul si activeaza</strong>
+                  <strong>3. Participantii blocheaza fondurile si activeaza</strong>
                   <p>
-                    Dupa ambele lock-uri, cererea devine gata de activare. Acoperirea activata se
-                    urmareste in `Policies`, nu in marketplace.
+                    Fermierul blocheaza premium-ul, apoi underwriter-ul blocheaza capitalul. Dupa
+                    ambele operatii, cererea devine gata de activare.
                   </p>
                 </div>
               </div>
@@ -1666,19 +1711,21 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
           {pendingFarmerLockRequests.length > 0 ? (
             <div className="coverage-summary-card coverage-summary-card--full">
               <span className="coverage-summary-card__eyebrow">
-                Draft-uri ce asteapta premium lock
+                Settlement-uri ce asteapta premium lock
               </span>
               <div className="coverage-summary-note">
-                <strong>Cererea exista, dar nu este inca listata</strong>
+                <strong>Un furnizor a pregatit termenii ETH ai ofertei</strong>
                 <p>
-                  Daca tranzactia initiala a esuat sau fermierul a inchis wallet-ul, cererea
-                  ramane in `awaiting_farmer_lock`. O poti finaliza de aici fara sa recreezi
-                  oferta.
+                  Cursul ETH/EUR si sumele in Wei sunt valabile temporar. Blocheaza premium-ul
+                  doar daca doresti sa continui activarea politei.
                 </p>
               </div>
               <div className="marketplace-list">
                 {pendingFarmerLockRequests.map((request) => {
-                  const draftLivePricing = extractLivePricing(request);
+                  const draftSettlementTerms = extractSettlementTerms(request);
+                  const quoteExpired =
+                    !!draftSettlementTerms.expiresAt &&
+                    new Date(draftSettlementTerms.expiresAt).getTime() <= Date.now();
 
                   return (
                     <article key={request.id} className="marketplace-card">
@@ -1729,18 +1776,20 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                       <div className="marketplace-card__footer">
                         <div className="marketplace-card__footnotes">
                           <small>
-                            Cererea intra in marketplace numai dupa lock-ul integral al premium-ului.
+                            Settlement expira la: {draftSettlementTerms.expiresAt
+                              ? new Date(draftSettlementTerms.expiresAt).toLocaleString("ro-RO")
+                              : "indisponibil"}
                           </small>
                           <small>
-                            Premium necesar acum:{" "}
-                            {draftLivePricing.premiumLockEth !== null
-                              ? `${formatEth(draftLivePricing.premiumLockEth, 6)} la ${new Intl.NumberFormat(
+                            Premium fixat pentru settlement:{" "}
+                            {draftSettlementTerms.premiumLockEth !== null
+                              ? `${formatEth(draftSettlementTerms.premiumLockEth, 6)} la ${new Intl.NumberFormat(
                                   "ro-RO",
                                   {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
                                   }
-                                ).format(draftLivePricing.ethEurRate ?? 0)} EUR/ETH`
+                                ).format(draftSettlementTerms.ethEurRate ?? 0)} EUR/ETH`
                               : "indisponibil"}
                           </small>
                         </div>
@@ -1751,12 +1800,13 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                             onClick={() => void handleLockPremium(request)}
                             disabled={
                               lockingPremiumRequestId === request.id ||
-                              draftLivePricing.premiumLockEth === null
+                              draftSettlementTerms.premiumLockEth === null ||
+                              quoteExpired
                             }
                           >
                             {lockingPremiumRequestId === request.id
                               ? "Se blocheaza..."
-                              : "Blocheaza premium si listeaza"}
+                              : "Blocheaza premium"}
                           </button>
                         </div>
                       </div>
@@ -1821,7 +1871,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
             <div>
               <h3>Marketplace</h3>
               <p className="field-hint">
-                Cereri cu premium deja blocat, pregatite pentru evaluarea underwriter-ului.
+                Cereri comerciale in EUR, settlement-uri ETH pregatite si cereri gata pentru capital lock.
               </p>
             </div>
             <div className="marketplace-board__summary">
@@ -1844,7 +1894,12 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
             {[
               { id: "all", label: "Toate", count: marketplaceSummary.total },
               { id: "open", label: "Open", count: marketplaceSummary.open },
-              { id: "locked", label: "Locked", count: marketplaceRequests.filter((request) => request.latestQuote?.status === "locked").length },
+              {
+                id: "locked",
+                label: "Settlement",
+                count: marketplaceRequests.filter((request) => !!request.latestSettlement)
+                  .length,
+              },
               { id: "ready", label: "Ready", count: marketplaceSummary.ready },
               { id: "severe", label: "Severe", count: marketplaceSummary.severe },
             ].map((filter) => (
@@ -1875,8 +1930,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
             <div className="empty-state">
               <h3>Nu exista cereri</h3>
               <p>
-                Inca nu exista cereri listate cu premium lock. Trimite o cerere si finalizeaza
-                lock-ul fermierului pentru a o publica aici.
+                Inca nu exista cereri comerciale listate. Trimite o cerere pentru a porni fluxul EUR catre settlement ETH.
               </p>
             </div>
           ) : filteredMarketplaceRequests.length === 0 ? (
@@ -1939,8 +1993,8 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                         </strong>
                       </div>
                       <div>
-                        <span>Stare quote</span>
-                        <strong>{request.latestQuote?.status ?? "n/a"}</strong>
+                        <span>Stare settlement</span>
+                        <strong>{request.latestSettlement?.status ?? "nepregatit"}</strong>
                       </div>
                     </div>
                   </button>
@@ -1951,18 +2005,25 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                 {selectedMarketplaceRequest ? (() => {
                   const request = selectedMarketplaceRequest;
                   const riskBreakdown = extractRiskBreakdown(request);
-                  const livePricing = extractLivePricing(request);
+                  const settlementTerms = extractSettlementTerms(request);
                   const hasSufficientCapital =
-                    livePricing.capitalLockEth !== null &&
-                    underwriterAvailableEth >= livePricing.capitalLockEth;
+                    settlementTerms.capitalLockEth !== null &&
+                    underwriterAvailableEth >= settlementTerms.capitalLockEth;
+                  const settlementExpired =
+                    request.latestSettlement?.status === "prepared" &&
+                    !!settlementTerms.expiresAt &&
+                    new Date(settlementTerms.expiresAt).getTime() <= Date.now();
+                  const commercialQuoteExpired =
+                    !!request.latestQuote?.expiresAt &&
+                    new Date(request.latestQuote.expiresAt).getTime() <= Date.now();
                   const isFarmer =
                     !!account &&
                     request.farmerAddress.toLowerCase() === account.toLowerCase();
                   const isUnderwriter =
                     !!account &&
-                    !!request.latestQuote &&
-                    ethers.isAddress(request.latestQuote.underwriterAddress) &&
-                    request.latestQuote.underwriterAddress.toLowerCase() ===
+                    !!request.latestSettlement?.underwriterAddress &&
+                    ethers.isAddress(request.latestSettlement.underwriterAddress) &&
+                    request.latestSettlement.underwriterAddress.toLowerCase() ===
                       account.toLowerCase();
 
                   return (
@@ -2047,31 +2108,43 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                           <small>peak istoric relevant</small>
                         </div>
                         <div className="marketplace-detail">
-                          <span>Curs live ETH/EUR</span>
+                          <span>Curs ETH/EUR pentru settlement</span>
                           <strong>
-                            {livePricing.ethEurRate !== null
+                            {settlementTerms.ethEurRate !== null
                               ? `${new Intl.NumberFormat("ro-RO", {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
-                                }).format(livePricing.ethEurRate)} EUR`
-                              : "indisponibil"}
+                                }).format(settlementTerms.ethEurRate)} EUR`
+                              : "se calculeaza la settlement"}
                           </strong>
                           <small>
-                            {livePricing.fetchedAt
-                              ? `actualizat ${new Date(
-                                  livePricing.fetchedAt
+                            {settlementTerms.fetchedAt
+                              ? `fixat la ${new Date(
+                                  settlementTerms.fetchedAt
                                 ).toLocaleTimeString("ro-RO")}`
-                              : "provider live indisponibil"}
+                              : "oferta comerciala ramane in EUR"}
                           </small>
                         </div>
                         <div className="marketplace-detail">
-                          <span>Lock necesar</span>
+                          <span>Capital necesar</span>
                           <strong>
-                            {livePricing.capitalLockEth !== null
-                              ? formatEth(livePricing.capitalLockEth, 6)
+                            {settlementTerms.capitalLockEth !== null
+                              ? formatEth(settlementTerms.capitalLockEth, 6)
                               : "indisponibil"}
                           </strong>
-                          <small>calculat din payout cap la cursul curent</small>
+                          <small>fixat doar in sesiunea de settlement</small>
+                        </div>
+                        <div className="marketplace-detail">
+                          <span>Trigger score</span>
+                          <strong>{request.latestQuote?.triggerThresholdScore ?? "n/a"}</strong>
+                          <small>configuratie calculata automat</small>
+                        </div>
+                        <div className="marketplace-detail">
+                          <span>Prag ploaie 24h</span>
+                          <strong>
+                            {request.latestQuote?.triggerEmergencyRain24h ?? "n/a"} mm
+                          </strong>
+                          <small>{request.latestQuote?.riskModelVersion ?? "model indisponibil"}</small>
                         </div>
                       </div>
 
@@ -2079,21 +2152,25 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                         <p className="marketplace-card__warning">{riskBreakdown.warning}</p>
                       ) : null}
 
-                      {request.latestQuote?.status === "open" &&
-                      livePricing.capitalLockEth !== null &&
+                      {request.status === "awaiting_underwriter" &&
+                      settlementTerms.capitalLockEth !== null &&
                       !hasSufficientCapital ? (
                         <p className="marketplace-card__warning">
                           Capital disponibil insuficient. Sunt necesari{" "}
-                          {formatEth(livePricing.capitalLockEth, 6)}, iar wallet-ul are disponibil{" "}
+                          {formatEth(settlementTerms.capitalLockEth, 6)}, iar wallet-ul are disponibil{" "}
                           {formatEth(underwriterAvailableEth, 6)}.
                         </p>
                       ) : null}
 
-                      {request.latestQuote?.status === "open" &&
-                      livePricing.capitalLockEth === null ? (
+                      {commercialQuoteExpired ? (
                         <p className="marketplace-card__warning">
-                          Cursul live ETH/EUR nu este disponibil acum. Lock-ul underwriter-ului
-                          este blocat pana la revenirea providerului.
+                          Oferta comerciala in EUR a expirat. Pentru continuare trebuie generata o oferta noua.
+                        </p>
+                      ) : null}
+
+                      {!commercialQuoteExpired && settlementExpired ? (
+                        <p className="marketplace-card__warning">
+                          Settlement-ul ETH a expirat. Se poate pregati unul nou la cursul curent.
                         </p>
                       ) : null}
 
@@ -2106,11 +2183,12 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                               : formatCurrency(request.latestPremiumPayment.amountEur)}
                           </small>
                         ) : null}
-                        {request.latestQuote?.status === "locked" ? (
+                        {request.latestSettlement?.underwriterAddress ? (
                           <small>
-                            Underwriter: {shortAddress(request.latestQuote.underwriterAddress)}
-                            {request.latestQuote.lockedAmountEth !== null
-                              ? ` - lock ${request.latestQuote.lockedAmountEth.toFixed(4)} ETH`
+                            Underwriter: {shortAddress(request.latestSettlement.underwriterAddress)}
+                            {request.latestReservation?.reservedAmountEth !== null &&
+                            request.latestReservation?.reservedAmountEth !== undefined
+                              ? ` - lock ${request.latestReservation.reservedAmountEth.toFixed(4)} ETH`
                               : ""}
                           </small>
                         ) : null}
@@ -2126,8 +2204,54 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
 
                       <div className="marketplace-card__actions marketplace-card__actions--split">
                         <div className="marketplace-card__actions-group">
-                          {request.latestQuote?.status === "open" &&
-                          livePricing.capitalLockEth !== null ? (
+                          {request.status === "quoted" && !commercialQuoteExpired ? (
+                            <button
+                              type="button"
+                              className="tertiary-button"
+                              onClick={() => void handlePrepareSettlement(request)}
+                              disabled={lockingRequestId === request.id}
+                            >
+                              {lockingRequestId === request.id
+                                ? "Se pregateste..."
+                              : "Pregateste settlement ETH"}
+                            </button>
+                          ) : null}
+
+                          {request.status === "awaiting_farmer_lock" &&
+                          settlementExpired &&
+                          !commercialQuoteExpired &&
+                          request.latestSettlement?.status === "prepared" ? (
+                            <button
+                              type="button"
+                              className="tertiary-button"
+                              onClick={() => void handlePrepareSettlement(request)}
+                              disabled={lockingRequestId === request.id}
+                            >
+                              {lockingRequestId === request.id
+                                ? "Se recalculeaza..."
+                                : "Recalculeaza settlement ETH"}
+                            </button>
+                          ) : null}
+
+                          {request.status === "awaiting_farmer_lock" &&
+                          isFarmer &&
+                          settlementTerms.premiumLockEth !== null &&
+                          !settlementExpired ? (
+                            <button
+                              type="button"
+                              className="tertiary-button"
+                              onClick={() => void handleLockPremium(request)}
+                              disabled={lockingPremiumRequestId === request.id}
+                            >
+                              {lockingPremiumRequestId === request.id
+                                ? "Se blocheaza..."
+                                : "Blocheaza premium fermier"}
+                            </button>
+                          ) : null}
+
+                          {request.status === "awaiting_underwriter" &&
+                          settlementTerms.capitalLockEth !== null &&
+                          !settlementExpired ? (
                             <button
                               type="button"
                               className="tertiary-button"
@@ -2147,6 +2271,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                               type="button"
                               className="primary-button primary-button--compact"
                               onClick={() => void handleActivateFromQuote(request)}
+                              disabled={settlementExpired}
                             >
                               Activeaza din lock
                             </button>
@@ -2167,7 +2292,7 @@ const InsuranceInterface: React.FC<InsuranceInterfaceProps> = ({
                             </button>
                           ) : null}
 
-                          {request.latestQuote?.status === "locked" && isUnderwriter ? (
+                          {request.latestSettlement?.underwriterAddress && isUnderwriter ? (
                             <button
                               type="button"
                               className="ghost-button"

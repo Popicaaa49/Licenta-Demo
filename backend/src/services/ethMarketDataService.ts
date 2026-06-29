@@ -1,4 +1,4 @@
-type LiveEthPricing = {
+export type QuoteSettlementTerms = {
   ethEurRate: number;
   capitalLockEth: number;
   capitalLockWei: string;
@@ -26,10 +26,10 @@ export class EthMarketDataService {
     private readonly cacheTtlMs = 60_000
   ) {}
 
-  async getLiveEthPricing(input: {
+  async getQuoteSettlementTerms(input: {
     payoutCapEur: number;
     premiumAmountEur: number;
-  }): Promise<LiveEthPricing> {
+  }): Promise<QuoteSettlementTerms> {
     const { ethEurRate, fetchedAt } = await this.getEthEurRate();
     const capitalLockEth = round(input.payoutCapEur / ethEurRate, 6);
     const premiumLockEth = round(input.premiumAmountEur / ethEurRate, 6);

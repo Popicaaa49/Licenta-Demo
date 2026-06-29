@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import WalletConnect from "./components/WalletConnect";
+import NotificationBell from "./components/NotificationBell";
 import GameInterface from "./components/GameInterface";
 import MatchesList from "./components/MatchesList";
 import MatchHistory from "./components/MatchHistory";
@@ -285,6 +286,18 @@ const App: React.FC = () => {
                 >
                   Statistici
                 </button>
+              ) : null}
+              {activeModule === "insurance" ? (
+                <NotificationBell
+                  account={account}
+                  walletConnected={walletReady}
+                  onNavigateToEntity={(notification) => {
+                    setActiveModule("insurance");
+                    setActiveInsuranceTab(
+                      notification.entityType === "policy" ? "policies" : "marketplace"
+                    );
+                  }}
+                />
               ) : null}
               <WalletConnect
                 account={account}

@@ -1,4 +1,5 @@
 import { ContractRecord, ContractRepository } from "../repositories/contractRepository";
+import { NotificationRepository } from "../repositories/notificationRepository";
 import { PayoutAuditRepository } from "../repositories/payoutAuditRepository";
 import { PayoutJobRepository } from "../repositories/payoutJobRepository";
 import { RiskSnapshot } from "../types/riskSnapshot";
@@ -11,7 +12,8 @@ export class PayoutOrchestrator {
     private readonly jobRepository = new PayoutJobRepository(),
     private readonly auditRepository = new PayoutAuditRepository(),
     private readonly idempotencyKeyFactory = new IdempotencyKeyFactory(),
-    private readonly contractRepository = new ContractRepository()
+    private readonly contractRepository = new ContractRepository(),
+    private readonly notificationRepository = new NotificationRepository()
   ) {}
 
   async enqueueTriggeredPolicies(input: {
@@ -62,6 +64,10 @@ export class PayoutOrchestrator {
         }
       );
 
+      if (!created.deduplicated) {
+        await this.notifyPayoutTriggered(policy, created.job.id, input.snapshot.id, decision.triggerReason);
+      }
+
       jobs.push({
         jobId: created.job.id,
         policyId,
@@ -71,5 +77,39 @@ export class PayoutOrchestrator {
     }
 
     return jobs;
+  }
+
+  private async notifyPayoutTriggered(
+    policy: ContractRecord,
+    payoutJobId: number,
+    snapshotId: number,
+    triggerReason: string
+  ) {
+    const recipients = [policy.user_address, policy.underwriter_address].filter(
+      (recipient): recipient is string => Boolean(recipient)
+    );
+
+    try {
+      await this.notificationRepository.createMany(
+        recipients.map((recipientAddress) => ({
+          recipientAddress,
+          type: "payout_triggered",
+          title: "Payout declansat",
+          message: `Polita #${policy.id} a depasit conditiile parametrice. Payout-ul a fost introdus in coada de executie.`,
+          entityType: "policy",
+          entityId: Number(policy.id),
+          dedupeKey: `payout_triggered:${payoutJobId}`,
+          metadata: {
+            payoutJobId,
+            snapshotId,
+            triggerReason,
+            locationId: policy.location_id,
+            cropType: policy.crop_type,
+          },
+        }))
+      );
+    } catch (error) {
+      console.warn("Unable to create payout trigger notification", error);
+    }
   }
 }

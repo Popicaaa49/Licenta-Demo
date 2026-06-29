@@ -1,4 +1,5 @@
 import { ContractRepository } from "../repositories/contractRepository";
+import { NotificationRepository } from "../repositories/notificationRepository";
 import { PayoutAttemptRepository } from "../repositories/payoutAttemptRepository";
 import { PayoutAuditRepository } from "../repositories/payoutAuditRepository";
 import { PayoutJobRepository } from "../repositories/payoutJobRepository";
@@ -19,7 +20,8 @@ export class PayoutWorker {
     private readonly errorClassifier = new ErrorClassifier(),
     private readonly retryPolicy = new RetryPolicy(),
     private readonly contractRepository = new ContractRepository(),
-    private readonly insuranceClient = new InsuranceContractClient()
+    private readonly insuranceClient = new InsuranceContractClient(),
+    private readonly notificationRepository = new NotificationRepository()
   ) {}
 
   async runOnce(now = new Date()) {
@@ -113,6 +115,20 @@ export class PayoutWorker {
         payoutTriggered: onChainPolicy.payoutTriggered,
         active: onChainPolicy.active,
       });
+      await this.notifyPolicyParticipants(job.policyId, {
+        type: "payout_paid",
+        title: "Payout platit",
+        message: `Payout-ul pentru polita #${job.policyId} a fost confirmat on-chain.`,
+        entityType: "policy",
+        entityId: job.policyId,
+        dedupeKey: `payout_paid:${job.id}`,
+        metadata: {
+          payoutJobId: job.id,
+          txHash: submittedTxHash,
+          gasPrice: confirmation.gasPrice,
+          gasUsed: confirmation.gasUsed,
+        },
+      });
     } catch (error) {
       const classified = this.errorClassifier.classify(error);
       const nextRetryAt =
@@ -141,6 +157,21 @@ export class PayoutWorker {
           nextRetryAt: nextRetryAt.toISOString(),
           txHash,
         });
+        await this.notifyPolicyParticipants(job.policyId, {
+          type: "payout_retry_scheduled",
+          title: "Payout reprogramat",
+          message: `Executia payout-ului pentru polita #${job.policyId} a esuat temporar si va fi reincercata.`,
+          entityType: "policy",
+          entityId: job.policyId,
+          dedupeKey: `payout_retry_scheduled:${job.id}:${job.attemptCount}`,
+          metadata: {
+            payoutJobId: job.id,
+            errorCode: classified.code,
+            errorMessage: classified.message,
+            nextRetryAt: nextRetryAt.toISOString(),
+            txHash,
+          },
+        });
         return;
       }
 
@@ -154,6 +185,53 @@ export class PayoutWorker {
         errorMessage: classified.message,
         txHash,
       });
+      await this.notifyPolicyParticipants(job.policyId, {
+        type: "payout_failed",
+        title: "Payout esuat",
+        message: `Executia payout-ului pentru polita #${job.policyId} a esuat definitiv si necesita verificare manuala.`,
+        entityType: "policy",
+        entityId: job.policyId,
+        dedupeKey: `payout_failed:${job.id}`,
+        metadata: {
+          payoutJobId: job.id,
+          errorCode: classified.code,
+          errorMessage: classified.message,
+          txHash,
+        },
+      });
+    }
+  }
+
+  private async notifyPolicyParticipants(
+    policyId: number,
+    notification: {
+      type: string;
+      title: string;
+      message: string;
+      entityType: string;
+      entityId?: number | null;
+      dedupeKey?: string | null;
+      metadata?: Record<string, unknown>;
+    }
+  ) {
+    try {
+      const policy = await this.contractRepository.getById(policyId);
+      if (!policy) {
+        return;
+      }
+
+      const recipients = [policy.user_address, policy.underwriter_address].filter(
+        (recipient): recipient is string => Boolean(recipient)
+      );
+
+      await this.notificationRepository.createMany(
+        recipients.map((recipientAddress) => ({
+          recipientAddress,
+          ...notification,
+        }))
+      );
+    } catch (error) {
+      console.warn("Unable to create payout notification", error);
     }
   }
 
@@ -186,6 +264,19 @@ export class PayoutWorker {
         reason: "stale_processing_recovered",
         nextRetryAt: nextRetryAt.toISOString(),
       });
+      await this.notifyPolicyParticipants(staleJob.policyId, {
+        type: "payout_retry_scheduled",
+        title: "Payout reprogramat",
+        message: `Un payout blocat in procesare pentru polita #${staleJob.policyId} a fost recuperat si reprogramat.`,
+        entityType: "policy",
+        entityId: staleJob.policyId,
+        dedupeKey: `payout_retry_scheduled:${staleJob.id}:stale_processing`,
+        metadata: {
+          payoutJobId: staleJob.id,
+          reason: "stale_processing_recovered",
+          nextRetryAt: nextRetryAt.toISOString(),
+        },
+      });
       return true;
     }
 
@@ -196,6 +287,18 @@ export class PayoutWorker {
     );
     await this.payoutAuditRepository.append(staleJob.policyId, staleJob.id, "dead_lettered", {
       reason: "stale_processing_recovered",
+    });
+    await this.notifyPolicyParticipants(staleJob.policyId, {
+      type: "payout_failed",
+      title: "Payout esuat",
+      message: `Payout-ul pentru polita #${staleJob.policyId} a ramas blocat si nu mai poate fi reincercat automat.`,
+      entityType: "policy",
+      entityId: staleJob.policyId,
+      dedupeKey: `payout_failed:${staleJob.id}`,
+      metadata: {
+        payoutJobId: staleJob.id,
+        reason: "stale_processing_recovered",
+      },
     });
 
     return true;
@@ -239,6 +342,21 @@ export class PayoutWorker {
         gasUsed: txState.gasUsed,
         reconciliation: "stale_submitted_recovered",
       });
+      await this.notifyPolicyParticipants(staleJob.policyId, {
+        type: "payout_paid",
+        title: "Payout platit",
+        message: `Payout-ul pentru polita #${staleJob.policyId} a fost confirmat on-chain dupa reconciliere.`,
+        entityType: "policy",
+        entityId: staleJob.policyId,
+        dedupeKey: `payout_paid:${staleJob.id}`,
+        metadata: {
+          payoutJobId: staleJob.id,
+          txHash: staleJob.txHash,
+          gasPrice: txState.gasPrice,
+          gasUsed: txState.gasUsed,
+          reconciliation: "stale_submitted_recovered",
+        },
+      });
       return true;
     }
 
@@ -258,6 +376,19 @@ export class PayoutWorker {
       await this.payoutAuditRepository.append(staleJob.policyId, staleJob.id, "dead_lettered", {
         txHash: staleJob.txHash,
         reason: "submitted_tx_reverted",
+      });
+      await this.notifyPolicyParticipants(staleJob.policyId, {
+        type: "payout_failed",
+        title: "Payout esuat",
+        message: `Tranzactia de payout pentru polita #${staleJob.policyId} a fost minata cu status de esec.`,
+        entityType: "policy",
+        entityId: staleJob.policyId,
+        dedupeKey: `payout_failed:${staleJob.id}`,
+        metadata: {
+          payoutJobId: staleJob.id,
+          txHash: staleJob.txHash,
+          reason: "submitted_tx_reverted",
+        },
       });
       return true;
     }
@@ -283,6 +414,20 @@ export class PayoutWorker {
         reason: "submitted_tx_missing",
         nextRetryAt: nextRetryAt.toISOString(),
       });
+      await this.notifyPolicyParticipants(staleJob.policyId, {
+        type: "payout_retry_scheduled",
+        title: "Payout reprogramat",
+        message: `Tranzactia payout pentru polita #${staleJob.policyId} nu a fost gasita on-chain si va fi retrimisa.`,
+        entityType: "policy",
+        entityId: staleJob.policyId,
+        dedupeKey: `payout_retry_scheduled:${staleJob.id}:submitted_missing`,
+        metadata: {
+          payoutJobId: staleJob.id,
+          txHash: staleJob.txHash,
+          reason: "submitted_tx_missing",
+          nextRetryAt: nextRetryAt.toISOString(),
+        },
+      });
       return true;
     }
 
@@ -294,6 +439,19 @@ export class PayoutWorker {
     await this.payoutAuditRepository.append(staleJob.policyId, staleJob.id, "dead_lettered", {
       txHash: staleJob.txHash,
       reason: "submitted_tx_missing",
+    });
+    await this.notifyPolicyParticipants(staleJob.policyId, {
+      type: "payout_failed",
+      title: "Payout esuat",
+      message: `Tranzactia payout pentru polita #${staleJob.policyId} nu a fost gasita si bugetul de retry a fost epuizat.`,
+      entityType: "policy",
+      entityId: staleJob.policyId,
+      dedupeKey: `payout_failed:${staleJob.id}`,
+      metadata: {
+        payoutJobId: staleJob.id,
+        txHash: staleJob.txHash,
+        reason: "submitted_tx_missing",
+      },
     });
 
     return true;

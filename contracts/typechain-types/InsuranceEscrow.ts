@@ -112,6 +112,46 @@ export declare namespace InsuranceEscrow {
     payoutTriggered: boolean;
     state: bigint;
   };
+
+  export type QuoteTermsStruct = {
+    farmer: AddressLike;
+    locationId: string;
+    cropType: string;
+    thresholdScore: BigNumberish;
+    emergencyRain24h: BigNumberish;
+    premiumAmount: BigNumberish;
+    payoutAmount: BigNumberish;
+    startTime: BigNumberish;
+    endTime: BigNumberish;
+    expiresAt: BigNumberish;
+    state: BigNumberish;
+  };
+
+  export type QuoteTermsStructOutput = [
+    farmer: string,
+    locationId: string,
+    cropType: string,
+    thresholdScore: bigint,
+    emergencyRain24h: bigint,
+    premiumAmount: bigint,
+    payoutAmount: bigint,
+    startTime: bigint,
+    endTime: bigint,
+    expiresAt: bigint,
+    state: bigint
+  ] & {
+    farmer: string;
+    locationId: string;
+    cropType: string;
+    thresholdScore: bigint;
+    emergencyRain24h: bigint;
+    premiumAmount: bigint;
+    payoutAmount: bigint;
+    startTime: bigint;
+    endTime: bigint;
+    expiresAt: bigint;
+    state: bigint;
+  };
 }
 
 export interface InsuranceEscrowInterface extends Interface {
@@ -133,6 +173,7 @@ export interface InsuranceEscrowInterface extends Interface {
       | "getPolicy"
       | "getPremiumLock"
       | "getQuoteLock"
+      | "getQuoteTerms"
       | "getUnderwriterCapitalAccount"
       | "lockCapitalForQuote"
       | "lockPremiumForQuote"
@@ -141,6 +182,7 @@ export interface InsuranceEscrowInterface extends Interface {
       | "owner"
       | "policies"
       | "policyCount"
+      | "registerQuote"
       | "releasePremiumForQuote"
       | "releaseQuoteCapital"
       | "setOracle"
@@ -166,6 +208,8 @@ export interface InsuranceEscrowInterface extends Interface {
       | "QuotePremiumConverted"
       | "QuotePremiumLocked"
       | "QuotePremiumReleased"
+      | "QuoteRegistered"
+      | "QuoteTermsConverted"
       | "UnderwriterCapitalDeposited"
       | "UnderwriterCapitalWithdrawn"
       | "WeatherReportSubmitted"
@@ -206,16 +250,7 @@ export interface InsuranceEscrowInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "createPolicyFromQuote",
-    values: [
-      BigNumberish,
-      AddressLike,
-      string,
-      string,
-      BigNumberish,
-      BigNumberish,
-      BigNumberish,
-      BigNumberish
-    ]
+    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "expirePolicy",
@@ -251,6 +286,10 @@ export interface InsuranceEscrowInterface extends Interface {
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
+    functionFragment: "getQuoteTerms",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
     functionFragment: "getUnderwriterCapitalAccount",
     values: [AddressLike]
   ): string;
@@ -275,6 +314,22 @@ export interface InsuranceEscrowInterface extends Interface {
   encodeFunctionData(
     functionFragment: "policyCount",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "registerQuote",
+    values: [
+      BigNumberish,
+      AddressLike,
+      string,
+      string,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish,
+      BigNumberish
+    ]
   ): string;
   encodeFunctionData(
     functionFragment: "releasePremiumForQuote",
@@ -368,6 +423,10 @@ export interface InsuranceEscrowInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "getQuoteTerms",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "getUnderwriterCapitalAccount",
     data: BytesLike
   ): Result;
@@ -388,6 +447,10 @@ export interface InsuranceEscrowInterface extends Interface {
   decodeFunctionResult(functionFragment: "policies", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "policyCount",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "registerQuote",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -691,6 +754,53 @@ export namespace QuotePremiumReleasedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace QuoteRegisteredEvent {
+  export type InputTuple = [
+    quoteId: BigNumberish,
+    farmer: AddressLike,
+    premiumAmount: BigNumberish,
+    payoutAmount: BigNumberish,
+    thresholdScore: BigNumberish,
+    emergencyRain24h: BigNumberish,
+    expiresAt: BigNumberish
+  ];
+  export type OutputTuple = [
+    quoteId: bigint,
+    farmer: string,
+    premiumAmount: bigint,
+    payoutAmount: bigint,
+    thresholdScore: bigint,
+    emergencyRain24h: bigint,
+    expiresAt: bigint
+  ];
+  export interface OutputObject {
+    quoteId: bigint;
+    farmer: string;
+    premiumAmount: bigint;
+    payoutAmount: bigint;
+    thresholdScore: bigint;
+    emergencyRain24h: bigint;
+    expiresAt: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace QuoteTermsConvertedEvent {
+  export type InputTuple = [quoteId: BigNumberish, policyId: BigNumberish];
+  export type OutputTuple = [quoteId: bigint, policyId: bigint];
+  export interface OutputObject {
+    quoteId: bigint;
+    policyId: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace UnderwriterCapitalDepositedEvent {
   export type InputTuple = [
     underwriter: AddressLike,
@@ -840,16 +950,7 @@ export interface InsuranceEscrow extends BaseContract {
   >;
 
   createPolicyFromQuote: TypedContractMethod<
-    [
-      quoteId: BigNumberish,
-      user: AddressLike,
-      locationId: string,
-      cropType: string,
-      thresholdScore: BigNumberish,
-      emergencyRain24h: BigNumberish,
-      startTime: BigNumberish,
-      endTime: BigNumberish
-    ],
+    [quoteId: BigNumberish],
     [bigint],
     "nonpayable"
   >;
@@ -909,6 +1010,12 @@ export interface InsuranceEscrow extends BaseContract {
         state: bigint;
       }
     ],
+    "view"
+  >;
+
+  getQuoteTerms: TypedContractMethod<
+    [quoteId: BigNumberish],
+    [InsuranceEscrow.QuoteTermsStructOutput],
     "view"
   >;
 
@@ -981,6 +1088,24 @@ export interface InsuranceEscrow extends BaseContract {
   >;
 
   policyCount: TypedContractMethod<[], [bigint], "view">;
+
+  registerQuote: TypedContractMethod<
+    [
+      quoteId: BigNumberish,
+      farmer: AddressLike,
+      locationId: string,
+      cropType: string,
+      thresholdScore: BigNumberish,
+      emergencyRain24h: BigNumberish,
+      premiumAmount: BigNumberish,
+      payoutAmount: BigNumberish,
+      startTime: BigNumberish,
+      endTime: BigNumberish,
+      expiresAt: BigNumberish
+    ],
+    [void],
+    "nonpayable"
+  >;
 
   releasePremiumForQuote: TypedContractMethod<
     [quoteId: BigNumberish],
@@ -1059,20 +1184,7 @@ export interface InsuranceEscrow extends BaseContract {
   >;
   getFunction(
     nameOrSignature: "createPolicyFromQuote"
-  ): TypedContractMethod<
-    [
-      quoteId: BigNumberish,
-      user: AddressLike,
-      locationId: string,
-      cropType: string,
-      thresholdScore: BigNumberish,
-      emergencyRain24h: BigNumberish,
-      startTime: BigNumberish,
-      endTime: BigNumberish
-    ],
-    [bigint],
-    "nonpayable"
-  >;
+  ): TypedContractMethod<[quoteId: BigNumberish], [bigint], "nonpayable">;
   getFunction(
     nameOrSignature: "expirePolicy"
   ): TypedContractMethod<[policyId: BigNumberish], [void], "nonpayable">;
@@ -1126,6 +1238,13 @@ export interface InsuranceEscrow extends BaseContract {
         state: bigint;
       }
     ],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "getQuoteTerms"
+  ): TypedContractMethod<
+    [quoteId: BigNumberish],
+    [InsuranceEscrow.QuoteTermsStructOutput],
     "view"
   >;
   getFunction(
@@ -1202,6 +1321,25 @@ export interface InsuranceEscrow extends BaseContract {
   getFunction(
     nameOrSignature: "policyCount"
   ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "registerQuote"
+  ): TypedContractMethod<
+    [
+      quoteId: BigNumberish,
+      farmer: AddressLike,
+      locationId: string,
+      cropType: string,
+      thresholdScore: BigNumberish,
+      emergencyRain24h: BigNumberish,
+      premiumAmount: BigNumberish,
+      payoutAmount: BigNumberish,
+      startTime: BigNumberish,
+      endTime: BigNumberish,
+      expiresAt: BigNumberish
+    ],
+    [void],
+    "nonpayable"
+  >;
   getFunction(
     nameOrSignature: "releasePremiumForQuote"
   ): TypedContractMethod<[quoteId: BigNumberish], [void], "nonpayable">;
@@ -1321,6 +1459,20 @@ export interface InsuranceEscrow extends BaseContract {
     QuotePremiumReleasedEvent.InputTuple,
     QuotePremiumReleasedEvent.OutputTuple,
     QuotePremiumReleasedEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuoteRegistered"
+  ): TypedContractEvent<
+    QuoteRegisteredEvent.InputTuple,
+    QuoteRegisteredEvent.OutputTuple,
+    QuoteRegisteredEvent.OutputObject
+  >;
+  getEvent(
+    key: "QuoteTermsConverted"
+  ): TypedContractEvent<
+    QuoteTermsConvertedEvent.InputTuple,
+    QuoteTermsConvertedEvent.OutputTuple,
+    QuoteTermsConvertedEvent.OutputObject
   >;
   getEvent(
     key: "UnderwriterCapitalDeposited"
@@ -1486,6 +1638,28 @@ export interface InsuranceEscrow extends BaseContract {
       QuotePremiumReleasedEvent.InputTuple,
       QuotePremiumReleasedEvent.OutputTuple,
       QuotePremiumReleasedEvent.OutputObject
+    >;
+
+    "QuoteRegistered(uint256,address,uint256,uint256,uint32,uint32,uint64)": TypedContractEvent<
+      QuoteRegisteredEvent.InputTuple,
+      QuoteRegisteredEvent.OutputTuple,
+      QuoteRegisteredEvent.OutputObject
+    >;
+    QuoteRegistered: TypedContractEvent<
+      QuoteRegisteredEvent.InputTuple,
+      QuoteRegisteredEvent.OutputTuple,
+      QuoteRegisteredEvent.OutputObject
+    >;
+
+    "QuoteTermsConverted(uint256,uint256)": TypedContractEvent<
+      QuoteTermsConvertedEvent.InputTuple,
+      QuoteTermsConvertedEvent.OutputTuple,
+      QuoteTermsConvertedEvent.OutputObject
+    >;
+    QuoteTermsConverted: TypedContractEvent<
+      QuoteTermsConvertedEvent.InputTuple,
+      QuoteTermsConvertedEvent.OutputTuple,
+      QuoteTermsConvertedEvent.OutputObject
     >;
 
     "UnderwriterCapitalDeposited(address,uint256,uint256)": TypedContractEvent<

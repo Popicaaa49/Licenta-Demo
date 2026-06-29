@@ -69,7 +69,7 @@ export class RiskSnapshotRepository {
         input.weatherType,
         JSON.stringify(input.matchedRules),
         JSON.stringify(input.explanation),
-        input.calculationVersion ?? "risk-engine:v1",
+        input.calculationVersion ?? "risk-engine:v2",
       ]
     );
 

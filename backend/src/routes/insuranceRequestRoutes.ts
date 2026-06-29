@@ -15,8 +15,10 @@ export const createInsuranceRequestRouter = (service: InsuranceRequestService) =
 
   router.get(
     "/",
-    asyncHandler(async (_req, res) => {
-      const requests = await service.listRequests();
+    asyncHandler(async (req, res) => {
+      const viewerAddress =
+        typeof req.query.viewerAddress === "string" ? req.query.viewerAddress : undefined;
+      const requests = await service.listRequests(viewerAddress);
       res.json(requests);
     })
   );
@@ -25,6 +27,20 @@ export const createInsuranceRequestRouter = (service: InsuranceRequestService) =
     "/",
     asyncHandler(async (req, res) => {
       const result = await service.createRequest(req.body);
+      res.status(201).json(result);
+    })
+  );
+
+  router.post(
+    "/:id/prepare-settlement",
+    asyncHandler(async (req, res) => {
+      const requestId = Number(req.params.id);
+      if (Number.isNaN(requestId)) {
+        res.status(400).json({ error: "Request id must be numeric." });
+        return;
+      }
+
+      const result = await service.prepareSettlement({ requestId });
       res.status(201).json(result);
     })
   );
@@ -41,7 +57,6 @@ export const createInsuranceRequestRouter = (service: InsuranceRequestService) =
       const result = await service.lockLatestQuoteCapital({
         requestId,
         underwriterAddress: String(req.body?.underwriterAddress ?? ""),
-        lockedAmountEth: String(req.body?.lockedAmountEth ?? ""),
         transactionHash:
           typeof req.body?.transactionHash === "string" ? req.body.transactionHash : undefined,
       });
@@ -114,15 +129,7 @@ export const createInsuranceRequestRouter = (service: InsuranceRequestService) =
         return;
       }
 
-      const result = await service.activatePolicyFromQuote({
-        requestId,
-        thresholdScore:
-          req.body?.thresholdScore === undefined ? undefined : Number(req.body.thresholdScore),
-        emergencyRain24h:
-          req.body?.emergencyRain24h === undefined
-            ? undefined
-            : Number(req.body.emergencyRain24h),
-      });
+      const result = await service.activatePolicyFromQuote({ requestId });
       res.status(201).json(result);
     })
   );
@@ -139,6 +146,12 @@ export const createInsuranceRequestRouter = (service: InsuranceRequestService) =
       const request = await service.getRequest(requestId);
       if (!request) {
         res.status(404).json({ error: "Insurance request not found." });
+        return;
+      }
+      const viewerAddress =
+        typeof req.query.viewerAddress === "string" ? req.query.viewerAddress : undefined;
+      if (!service.canViewRequest(request, viewerAddress)) {
+        res.status(403).json({ error: "You are not allowed to view this insurance request." });
         return;
       }
 

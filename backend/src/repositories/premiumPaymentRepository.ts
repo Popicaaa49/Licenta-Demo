@@ -7,6 +7,7 @@ import {
 export type CreatePremiumPaymentInput = {
   requestId: number;
   quoteId: number;
+  settlementId: number;
   payerAddress: string;
   amountEur: number;
   amountEth?: string | null;
@@ -21,6 +22,7 @@ export class PremiumPaymentRepository {
       `INSERT INTO premium_payments (
           request_id,
           quote_id,
+          settlement_id,
           payer_address,
           amount_eur,
           amount_eth,
@@ -28,11 +30,12 @@ export class PremiumPaymentRepository {
           transaction_hash,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *`,
       [
         input.requestId,
         input.quoteId,
+        input.settlementId,
         input.payerAddress,
         input.amountEur,
         input.amountEth ?? null,
@@ -45,8 +48,8 @@ export class PremiumPaymentRepository {
     return mapPremiumPaymentRecord(result.rows[0]);
   }
 
-  async updateLatestByQuoteId(input: {
-    quoteId: number;
+  async updateLatestBySettlementId(input: {
+    settlementId: number;
     status: string;
     transactionHash?: string | null;
     amountEth?: string | null;
@@ -61,13 +64,13 @@ export class PremiumPaymentRepository {
        WHERE id = (
          SELECT id
          FROM premium_payments
-         WHERE quote_id = $1
+         WHERE settlement_id = $1
          ORDER BY created_at DESC, id DESC
          LIMIT 1
        )
        RETURNING *`,
       [
-        input.quoteId,
+        input.settlementId,
         input.status,
         input.transactionHash ?? null,
         input.amountEth ?? null,

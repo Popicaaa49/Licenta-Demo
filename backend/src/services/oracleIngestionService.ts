@@ -1,4 +1,5 @@
 import { ContractRepository } from "../repositories/contractRepository";
+import { NotificationRepository } from "../repositories/notificationRepository";
 import { RiskSnapshotRepository } from "../repositories/riskSnapshotRepository";
 import { RiskEventRepository } from "../repositories/riskEventRepository";
 import { WeatherRepository } from "../repositories/weatherRepository";
@@ -21,6 +22,7 @@ export type OracleUpdatePayload = {
 };
 
 const HEAVY_RAIN_THRESHOLD = 20;
+const SEVERE_WEATHER_NOTIFICATION_SCORE = 5;
 
 const toNumber = (value: string | number | null | undefined) => {
   if (typeof value === "number") return value;
@@ -69,6 +71,7 @@ type OracleIngestionServiceDeps = {
   riskEventRepository?: RiskEventRepository;
   contractRepository?: ContractRepository;
   riskSnapshotRepository?: RiskSnapshotRepository;
+  notificationRepository?: NotificationRepository;
   payoutOrchestrator?: PayoutOrchestrator;
   riskStreamBroker?: RiskStreamBroker;
 };
@@ -78,6 +81,7 @@ export class OracleIngestionService {
   private readonly riskEventRepository: RiskEventRepository;
   private readonly contractRepository: ContractRepository;
   private readonly riskSnapshotRepository: RiskSnapshotRepository;
+  private readonly notificationRepository: NotificationRepository;
   private readonly payoutOrchestrator: PayoutOrchestrator;
   private readonly riskStreamBroker?: RiskStreamBroker;
 
@@ -86,6 +90,7 @@ export class OracleIngestionService {
     this.riskEventRepository = deps.riskEventRepository ?? new RiskEventRepository();
     this.contractRepository = deps.contractRepository ?? new ContractRepository();
     this.riskSnapshotRepository = deps.riskSnapshotRepository ?? new RiskSnapshotRepository();
+    this.notificationRepository = deps.notificationRepository ?? new NotificationRepository();
     this.payoutOrchestrator = deps.payoutOrchestrator ?? new PayoutOrchestrator();
     this.riskStreamBroker = deps.riskStreamBroker;
   }
@@ -163,12 +168,14 @@ export class OracleIngestionService {
       weatherType: finalMetrics.weatherType,
       matchedRules: assessment.matchedRules,
       explanation: assessment.explanation,
+      calculationVersion: assessment.calculationVersion,
     });
 
     this.riskStreamBroker?.publish(riskSnapshot);
 
+    let riskEventId: string | null = null;
     if (assessment.eventActive) {
-      await this.riskEventRepository.save({
+      const savedEvent = await this.riskEventRepository.save({
         id: openEvent?.id,
         locationId: payload.locationId,
         startTime: openEvent?.start_time ?? observedAt,
@@ -180,6 +187,7 @@ export class OracleIngestionService {
         season: assessment.season,
         triggerReasons: assessment.matchedRules,
       });
+      riskEventId = savedEvent?.id ?? openEvent?.id ?? null;
     } else if (openEvent) {
       await this.riskEventRepository.save({
         id: openEvent.id,
@@ -199,6 +207,14 @@ export class OracleIngestionService {
       payload.locationId,
       observedAt
     );
+
+    if (
+      assessment.eventActive &&
+      assessment.riskScore >= SEVERE_WEATHER_NOTIFICATION_SCORE &&
+      activeContracts.length > 0
+    ) {
+      await this.notifySevereWeather(activeContracts, riskSnapshot, riskEventId);
+    }
 
     const payoutJobs = await this.payoutOrchestrator.enqueueTriggeredPolicies({
       locationId: payload.locationId,
@@ -244,5 +260,45 @@ export class OracleIngestionService {
       assessment,
       latestEvent,
     };
+  }
+
+  private async notifySevereWeather(
+    activeContracts: Awaited<ReturnType<ContractRepository["getActiveByLocation"]>>,
+    riskSnapshot: Awaited<ReturnType<RiskSnapshotRepository["save"]>>,
+    riskEventId: string | null
+  ) {
+    const eventKey = riskEventId ?? `snapshot:${riskSnapshot.id}`;
+    const notifications = activeContracts.flatMap((contract) => {
+      const recipients = [contract.user_address, contract.underwriter_address].filter(
+        (recipient): recipient is string => Boolean(recipient)
+      );
+
+      return recipients.map((recipientAddress) => ({
+        recipientAddress,
+        type: "severe_weather_detected",
+        title: "Eveniment meteo sever detectat",
+        message: `Locatia politei #${contract.id} are risk score ${riskSnapshot.riskScore}. Sistemul monitorizeaza conditiile parametrice.`,
+        entityType: "policy",
+        entityId: Number(contract.id),
+        dedupeKey: `severe_weather:${contract.id}:${eventKey}`,
+        metadata: {
+          policyId: Number(contract.id),
+          locationId: riskSnapshot.locationId,
+          riskSnapshotId: riskSnapshot.id,
+          riskEventId,
+          riskScore: riskSnapshot.riskScore,
+          rain24h: riskSnapshot.rain24h,
+          windSpeed: riskSnapshot.windSpeed,
+          temperature: riskSnapshot.temperature,
+          matchedRules: riskSnapshot.matchedRules,
+        },
+      }));
+    });
+
+    try {
+      await this.notificationRepository.createMany(notifications);
+    } catch (error) {
+      console.warn("Unable to create severe weather notification", error);
+    }
   }
 }

@@ -83,13 +83,15 @@ const InsuranceOverview: React.FC<InsuranceOverviewProps> = ({
       try {
         setLoading(true);
         const { contract } = await getReadInsuranceContract();
-        const [policies, owner, oracle, requestResponse] = await Promise.all([
-          contract.getPolicies(),
+        const query = account ? `?viewerAddress=${encodeURIComponent(account)}` : "";
+        const [policyResponse, owner, oracle, requestResponse] = await Promise.all([
+          fetch(`${BACKEND_BASE_URL}/contract/policies${query}`),
           contract.owner(),
           contract.oracle(),
-          fetch(`${BACKEND_BASE_URL}/insurance-request`),
+          fetch(`${BACKEND_BASE_URL}/insurance-request${query}`),
         ]);
 
+        const policyPayload = policyResponse.ok ? ((await policyResponse.json()) as Array<{ state: number }>) : [];
         const requestPayload = requestResponse.ok
           ? ((await requestResponse.json()) as InsuranceRequest[])
           : [];
@@ -101,15 +103,30 @@ const InsuranceOverview: React.FC<InsuranceOverviewProps> = ({
           return;
         }
 
+        const normalizedAccount =
+          account && account.length > 0 ? account.toLowerCase() : null;
+        const visibleMarketplaceRequests = requestPayload.filter((request) => {
+          if (["quoted", "awaiting_farmer_lock", "awaiting_underwriter"].includes(request.status)) {
+            return true;
+          }
+
+          if (request.status !== "ready_for_activation" || !normalizedAccount) {
+            return false;
+          }
+
+          const isFarmer = request.farmerAddress.toLowerCase() === normalizedAccount;
+          const underwriterAddress = request.latestSettlement?.underwriterAddress;
+          const isUnderwriter =
+            !!underwriterAddress && underwriterAddress.toLowerCase() === normalizedAccount;
+
+          return isFarmer || isUnderwriter;
+        });
+
         setOverview({
-          activePolicies: policies.filter((policy: { state?: number }) => Number(policy.state) === PolicyState.Active).length,
-          marketplaceRequests: requestPayload.filter((request) =>
-            ["awaiting_underwriter", "awaiting_premium", "ready_for_activation"].includes(
-              request.status
-            )
-          ).length,
+          activePolicies: policyPayload.filter((policy) => Number(policy.state) === PolicyState.Active).length,
+          marketplaceRequests: visibleMarketplaceRequests.length,
           lockedQuotes: requestPayload.filter(
-            (request) => request.latestQuote?.status === "locked"
+            (request) => !!request.latestSettlement
           ).length,
           readyRequests: requestPayload.filter(
             (request) => request.status === "ready_for_activation"
@@ -138,7 +155,7 @@ const InsuranceOverview: React.FC<InsuranceOverviewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [walletConnected]);
+  }, [account, walletConnected]);
 
   const heroTitle = useMemo(() => {
     if (!account) {

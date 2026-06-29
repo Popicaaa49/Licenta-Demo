@@ -21,6 +21,7 @@ export type RiskAssessment = {
   matchedRules: string[];
   explanation: string[];
   eventActive: boolean;
+  calculationVersion: string;
   thresholds: {
     thresholdScore: number;
     emergencyRain24h: number;

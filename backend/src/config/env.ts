@@ -89,6 +89,8 @@ export const env = {
     "https://api.coinbase.com/v2/exchange-rates"
   ),
   ethExchangeRatesCacheTtlMs: readNumber("ETH_EXCHANGE_RATES_CACHE_TTL_MS", 60_000),
+  quoteValidityDays: readNumber("QUOTE_VALIDITY_DAYS", 7),
+  settlementValidityMinutes: readNumber("SETTLEMENT_VALIDITY_MINUTES", 60),
   openMeteoArchiveBaseUrl: readString(
     "OPEN_METEO_ARCHIVE_BASE_URL",
     "https://archive-api.open-meteo.com"

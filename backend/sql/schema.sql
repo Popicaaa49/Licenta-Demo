@@ -138,6 +138,10 @@ CREATE TABLE IF NOT EXISTS insurance_quotes (
     payout_cap_eur NUMERIC(14, 2) NOT NULL,
     premium_rate NUMERIC(8, 4) NOT NULL,
     premium_amount_eur NUMERIC(14, 2) NOT NULL,
+    trigger_threshold_score INTEGER NOT NULL,
+    trigger_emergency_rain_24h INTEGER NOT NULL,
+    risk_model_version TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
     breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -146,10 +150,36 @@ CREATE TABLE IF NOT EXISTS insurance_quotes (
 CREATE INDEX IF NOT EXISTS idx_insurance_quotes_request
     ON insurance_quotes (request_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_insurance_quotes_expiration
+    ON insurance_quotes (status, expires_at);
+
+CREATE TABLE IF NOT EXISTS quote_settlements (
+    id BIGSERIAL PRIMARY KEY,
+    quote_id BIGINT NOT NULL REFERENCES insurance_quotes(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'prepared',
+    underwriter_address TEXT,
+    premium_lock_wei NUMERIC(78, 0) NOT NULL,
+    payout_cap_wei NUMERIC(78, 0) NOT NULL,
+    eth_eur_rate NUMERIC(16, 4) NOT NULL,
+    rate_source TEXT NOT NULL,
+    rate_fetched_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    terms_tx_hash TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_quote_settlements_quote
+    ON quote_settlements (quote_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_quote_settlements_expiration
+    ON quote_settlements (status, expires_at);
+
 CREATE TABLE IF NOT EXISTS premium_payments (
     id BIGSERIAL PRIMARY KEY,
     request_id BIGINT NOT NULL REFERENCES insurance_requests(id) ON DELETE CASCADE,
     quote_id BIGINT NOT NULL REFERENCES insurance_quotes(id) ON DELETE CASCADE,
+    settlement_id BIGINT REFERENCES quote_settlements(id) ON DELETE RESTRICT,
     payer_address TEXT NOT NULL,
     amount_eur NUMERIC(14, 2) NOT NULL,
     amount_eth NUMERIC(20, 8),
@@ -166,6 +196,7 @@ CREATE TABLE IF NOT EXISTS capital_reservations (
     id BIGSERIAL PRIMARY KEY,
     request_id BIGINT NOT NULL REFERENCES insurance_requests(id) ON DELETE CASCADE,
     quote_id BIGINT NOT NULL REFERENCES insurance_quotes(id) ON DELETE CASCADE,
+    settlement_id BIGINT REFERENCES quote_settlements(id) ON DELETE RESTRICT,
     policy_id BIGINT,
     reserved_amount_eur NUMERIC(14, 2) NOT NULL,
     reserved_amount_eth NUMERIC(20, 8),
@@ -293,6 +324,30 @@ CREATE INDEX IF NOT EXISTS idx_payout_audit_policy
 
 CREATE INDEX IF NOT EXISTS idx_payout_audit_job
     ON payout_audit (payout_job_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGSERIAL PRIMARY KEY,
+    recipient_address TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id BIGINT,
+    dedupe_key TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_unread
+    ON notifications (LOWER(recipient_address), read_at, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_entity
+    ON notifications (entity_type, entity_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_recipient_dedupe
+    ON notifications (LOWER(recipient_address), dedupe_key)
+    WHERE dedupe_key IS NOT NULL;
 
 ALTER TABLE contracts
     ADD COLUMN IF NOT EXISTS underwriter_address TEXT;

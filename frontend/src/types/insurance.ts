@@ -10,6 +10,7 @@ export enum PolicyState {
 export interface Policy {
   id: number;
   user: string;
+  underwriter: string;
   locationId: string;
   locationLabel?: string | null;
   latitude?: number | null;
@@ -119,16 +120,27 @@ export interface InsuranceQuote {
   payoutCapEur: number;
   premiumRate: number;
   premiumAmountEur: number;
+  triggerThresholdScore: number;
+  triggerEmergencyRain24h: number;
+  riskModelVersion: string;
+  expiresAt: string;
   breakdown: Record<string, unknown>;
-  livePricing?: {
-    ethEurRate: number;
-    capitalLockEth: number;
-    capitalLockWei: string;
-    premiumLockEth: number;
-    premiumLockWei: string;
-    rateSource: string;
-    fetchedAt: string;
-  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoteSettlement {
+  id: number;
+  quoteId: number;
+  status: string;
+  underwriterAddress: string | null;
+  premiumLockWei: string;
+  payoutCapWei: string;
+  ethEurRate: number;
+  rateSource: string;
+  rateFetchedAt: string;
+  expiresAt: string;
+  termsTxHash: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -171,6 +183,7 @@ export interface InsuranceRequest {
   createdAt: string;
   updatedAt: string;
   latestQuote: InsuranceQuote | null;
+  latestSettlement: QuoteSettlement | null;
   latestPremiumPayment: PremiumPayment | null;
   latestReservation: CapitalReservation | null;
 }

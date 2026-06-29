@@ -29,6 +29,17 @@ type ContractServiceDeps = {
   locationIntakeService?: LocationIntakeService;
 };
 
+const normalizeAddress = (address?: string | null) => {
+  if (!address || !ethers.isAddress(address)) {
+    return null;
+  }
+
+  return address.toLowerCase();
+};
+
+const isMissingOnChainPolicy = (error: unknown) =>
+  error instanceof Error && error.message.includes("PolicyNotFound");
+
 export class ContractService {
   private readonly contractRepository: ContractRepository;
   private readonly insuranceClient: InsuranceContractClient;
@@ -172,16 +183,7 @@ export class ContractService {
       throw new Error("Quote capital is not locked on-chain.");
     }
 
-    const onChain = await this.insuranceClient.createPolicyFromQuote({
-      quoteId: input.quoteId,
-      userAddress: input.userAddress,
-      locationId: location.locationId,
-      cropType: input.cropType.trim(),
-      thresholdScore,
-      emergencyRain24h,
-      startTime,
-      endTime,
-    });
+    const onChain = await this.insuranceClient.createPolicyFromQuote(input.quoteId);
 
     const record = await this.contractRepository.create({
       id: onChain.policyId,
@@ -220,12 +222,106 @@ export class ContractService {
 
     return {
       dbContract,
-      onChainContract,
+      onChainContract: {
+        ...onChainContract,
+        payoutAmountWei: onChainContract.payoutAmountWei.toString(),
+      },
       latestReport,
     };
   }
 
   async listContracts() {
     return this.contractRepository.listAll();
+  }
+
+  async canViewContract(contractId: number, viewerAddress?: string | null) {
+    const [contract, ownerAddress] = await Promise.all([
+      this.contractRepository.getById(contractId),
+      this.insuranceClient.getOwner(),
+    ]);
+    if (!contract) {
+      return { exists: false, allowed: false };
+    }
+
+    const viewer = normalizeAddress(viewerAddress);
+    if (!viewer) {
+      return { exists: true, allowed: false };
+    }
+
+    const owner = ownerAddress.toLowerCase();
+    const isOwner = viewer === owner;
+    const isFarmer = contract.user_address.toLowerCase() === viewer;
+    const isUnderwriter =
+      !!contract.underwriter_address &&
+      contract.underwriter_address.toLowerCase() === viewer;
+
+    return {
+      exists: true,
+      allowed: isOwner || isFarmer || isUnderwriter,
+    };
+  }
+
+  async listPolicies(viewerAddress?: string | null) {
+    const [contracts, ownerAddress] = await Promise.all([
+      this.contractRepository.listAll(),
+      this.insuranceClient.getOwner(),
+    ]);
+    const viewer = normalizeAddress(viewerAddress);
+    const owner = ownerAddress.toLowerCase();
+
+    const visibleContracts =
+      viewer && viewer === owner
+        ? contracts
+        : contracts.filter((contract) => {
+            if (!viewer) {
+              return false;
+            }
+
+            const isFarmer = contract.user_address.toLowerCase() === viewer;
+            const isUnderwriter =
+              !!contract.underwriter_address &&
+              contract.underwriter_address.toLowerCase() === viewer;
+
+            return isFarmer || isUnderwriter;
+          });
+
+    const policies = await Promise.all(
+      visibleContracts.map(async (contract) => {
+        try {
+        const policy = await this.insuranceClient.getPolicy(Number(contract.id));
+        return {
+          id: Number(contract.id),
+          user: policy.userAddress,
+          underwriter: policy.underwriterAddress,
+          locationId: contract.location_id,
+          locationLabel: contract.location_label,
+          latitude: contract.latitude === null ? null : Number(contract.latitude),
+          longitude: contract.longitude === null ? null : Number(contract.longitude),
+          cropType: policy.cropType,
+          thresholdScore: policy.thresholdScore,
+          emergencyRain24h: policy.emergencyRain24h,
+          payoutWei: policy.payoutAmountWei.toString(),
+          payoutEth: policy.payoutAmountEth,
+          startTime: Math.floor(policy.startTime.getTime() / 1000),
+          endTime: Math.floor(policy.endTime.getTime() / 1000),
+          lastOracleUpdateAt: policy.lastOracleUpdateAt
+            ? Math.floor(policy.lastOracleUpdateAt.getTime() / 1000)
+            : 0,
+          lastRiskScore: policy.lastRiskScore,
+          payoutTriggered: policy.payoutTriggered,
+          state: policy.state,
+        };
+        } catch (error) {
+          // A local Hardhat reset invalidates old on-chain IDs while PostgreSQL persists.
+          if (isMissingOnChainPolicy(error)) {
+            return null;
+          }
+
+          throw error;
+        }
+      })
+    );
+
+    return policies.filter((policy): policy is NonNullable<typeof policy> => policy !== null);
   }
 }

@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ethers } from "ethers";
 import { useRiskStream } from "../hooks/useRiskStream";
 import { getInsuranceContract, getReadInsuranceContract } from "../web3Config";
 import {
   Policy,
-  PolicyLocationMetadata,
   POLICY_STATE_LABELS,
   PolicyState,
   RiskSnapshot,
@@ -114,70 +112,63 @@ const InsurancePoliciesList: React.FC<InsurancePoliciesListProps> = ({
 
     setLoading(true);
     try {
+      const query = account ? `?viewerAddress=${encodeURIComponent(account)}` : "";
       const { contract } = await getReadInsuranceContract();
-      const [data, owner, metadataResponse] = await Promise.all([
-        contract.getPolicies(),
+      const [dataResponse, owner] = await Promise.all([
+        fetch(`${BACKEND_BASE_URL}/contract/policies${query}`),
         contract.owner(),
-        fetch(`${BACKEND_BASE_URL}/contract`),
       ]);
 
-      let metadataById: Record<number, PolicyLocationMetadata> = {};
-      if (metadataResponse.ok) {
-        const metadataPayload = (await metadataResponse.json()) as Array<{
-          id: string;
-          location_id: string;
-          location_label: string | null;
-          latitude: string | number | null;
-          longitude: string | number | null;
-        }>;
-
-        metadataById = Object.fromEntries(
-          metadataPayload.map((item) => [
-            Number(item.id),
-            {
-              id: Number(item.id),
-              locationId: item.location_id,
-              locationLabel: item.location_label,
-              latitude:
-                item.latitude === null || item.latitude === undefined
-                  ? null
-                  : Number(item.latitude),
-              longitude:
-                item.longitude === null || item.longitude === undefined
-                  ? null
-                  : Number(item.longitude),
-            },
-          ])
-        );
+      if (!dataResponse.ok) {
+        throw new Error("Nu am putut incarca politele filtrate din backend.");
       }
 
-      const formatted: Policy[] = data.map((p: any, i: number) => {
-        const payoutWei = BigInt(p.payoutAmount?.toString?.() ?? "0");
-        const metadata = metadataById[i];
+      const data = (await dataResponse.json()) as Array<{
+        id: number;
+        user: string;
+        underwriter: string;
+        locationId: string;
+        locationLabel: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        cropType: string;
+        thresholdScore: number;
+        emergencyRain24h: number;
+        payoutWei: string;
+        payoutEth: string;
+        startTime: number;
+        endTime: number;
+        lastOracleUpdateAt: number;
+        lastRiskScore: number;
+        payoutTriggered: boolean;
+        state: PolicyState;
+      }>;
 
+      const formatted: Policy[] = data.map((p) => {
         return {
-          id: i,
+          id: p.id,
           user: p.user,
+          underwriter: p.underwriter,
           locationId: p.locationId,
-          locationLabel: metadata?.locationLabel ?? null,
-          latitude: metadata?.latitude ?? null,
-          longitude: metadata?.longitude ?? null,
+          locationLabel: p.locationLabel,
+          latitude: p.latitude,
+          longitude: p.longitude,
           cropType: p.cropType,
-          thresholdScore: Number(p.thresholdScore ?? 0),
-          emergencyRain24h: Number(p.emergencyRain24h ?? 0),
-          payoutWei,
-          payoutEth: ethers.formatEther(payoutWei),
-          startTime: Number(p.startTime ?? 0),
-          endTime: Number(p.endTime ?? 0),
-          lastOracleUpdateAt: Number(p.lastOracleUpdateAt ?? 0),
-          lastRiskScore: Number(p.lastRiskScore ?? 0),
+          thresholdScore: p.thresholdScore,
+          emergencyRain24h: p.emergencyRain24h,
+          payoutWei: BigInt(p.payoutWei),
+          payoutEth: p.payoutEth,
+          startTime: p.startTime,
+          endTime: p.endTime,
+          lastOracleUpdateAt: p.lastOracleUpdateAt,
+          lastRiskScore: p.lastRiskScore,
           payoutTriggered: Boolean(p.payoutTriggered),
           state: Number(p.state) as PolicyState,
         };
       });
 
-      setPolicies(formatted);
       setOwnerAddress(owner);
+      setPolicies(formatted);
     } catch (err) {
       console.error("Error fetching policies:", err);
       setActionMessage({
@@ -187,7 +178,7 @@ const InsurancePoliciesList: React.FC<InsurancePoliciesListProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [walletConnected]);
+  }, [account, walletConnected]);
 
   useEffect(() => {
     fetchPolicies();
@@ -566,7 +557,8 @@ const InsurancePoliciesList: React.FC<InsurancePoliciesListProps> = ({
                     </div>
 
                     <div className="policy-card__footer">
-                      <small>{shortAddress(policy.user)}</small>
+                      <small>Fermier {shortAddress(policy.user)}</small>
+                      <small>Underwriter {shortAddress(policy.underwriter)}</small>
                       <small>
                         {latestSnapshot
                           ? `${latestSnapshot.weatherType || "-"} - 24h ${latestSnapshot.rain24h} mm`
@@ -595,6 +587,7 @@ const InsurancePoliciesList: React.FC<InsurancePoliciesListProps> = ({
                         Fermier {shortAddress(selectedPolicy.user)} - activ intre{" "}
                         {formatDateTime(selectedPolicy.startTime)} si{" "}
                         {formatDateTime(selectedPolicy.endTime)}.
+                        {" "}Underwriter {shortAddress(selectedPolicy.underwriter)}.
                       </p>
                     </div>
 
@@ -608,7 +601,7 @@ const InsurancePoliciesList: React.FC<InsurancePoliciesListProps> = ({
                         <strong>{selectedPolicy.payoutEth} ETH</strong>
                       </div>
                       <div className="insurance-summary-card">
-                        <span>Ultim update oracle</span>
+                        <span>Ultima actualizare on-chain</span>
                         <strong>{formatDateTime(selectedPolicy.lastOracleUpdateAt)}</strong>
                       </div>
                     </div>

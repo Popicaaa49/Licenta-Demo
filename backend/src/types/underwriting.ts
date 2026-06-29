@@ -62,7 +62,27 @@ export type InsuranceQuoteRecord = {
   payout_cap_eur: string;
   premium_rate: string;
   premium_amount_eur: string;
+  trigger_threshold_score: number;
+  trigger_emergency_rain_24h: number;
+  risk_model_version: string;
+  expires_at: Date;
   breakdown: Record<string, unknown>;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export type QuoteSettlementRecord = {
+  id: string;
+  quote_id: string;
+  status: string;
+  underwriter_address: string | null;
+  premium_lock_wei: string;
+  payout_cap_wei: string;
+  eth_eur_rate: string;
+  rate_source: string;
+  rate_fetched_at: Date;
+  expires_at: Date;
+  terms_tx_hash: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -87,11 +107,28 @@ export type InsuranceRequestWithQuoteRecord = InsuranceRequestRecord & {
   payout_cap_eur: string | null;
   premium_rate: string | null;
   premium_amount_eur: string | null;
+  trigger_threshold_score: number | null;
+  trigger_emergency_rain_24h: number | null;
+  risk_model_version: string | null;
+  expires_at: Date | null;
   breakdown: Record<string, unknown> | null;
   quote_created_at: Date | null;
   quote_updated_at: Date | null;
   underwriter_address: string | null;
+  settlement_id: string | null;
+  settlement_status: string | null;
+  settlement_underwriter_address: string | null;
+  settlement_premium_lock_wei: string | null;
+  settlement_payout_cap_wei: string | null;
+  settlement_eth_eur_rate: string | null;
+  settlement_rate_source: string | null;
+  settlement_rate_fetched_at: Date | null;
+  settlement_expires_at: Date | null;
+  settlement_terms_tx_hash: string | null;
+  settlement_created_at: Date | null;
+  settlement_updated_at: Date | null;
   payment_id: string | null;
+  payment_settlement_id: string | null;
   payment_status: string | null;
   payment_payer_address: string | null;
   payment_amount_eur: string | null;
@@ -100,6 +137,7 @@ export type InsuranceRequestWithQuoteRecord = InsuranceRequestRecord & {
   payment_transaction_hash: string | null;
   payment_created_at: Date | null;
   reservation_id: string | null;
+  reservation_settlement_id: string | null;
   reservation_status: string | null;
   reservation_policy_id: string | null;
   reserved_amount_eur: string | null;
@@ -112,6 +150,7 @@ export type PremiumPaymentRecord = {
   id: string;
   request_id: string;
   quote_id: string;
+  settlement_id: string | null;
   payer_address: string;
   amount_eur: string;
   amount_eth: string | null;
@@ -125,6 +164,7 @@ export type CapitalReservationRecord = {
   id: string;
   request_id: string;
   quote_id: string;
+  settlement_id: string | null;
   policy_id: string | null;
   reserved_amount_eur: string;
   reserved_amount_eth: string | null;
@@ -155,16 +195,11 @@ export type InsuranceQuote = {
   payoutCapEur: number;
   premiumRate: number;
   premiumAmountEur: number;
+  triggerThresholdScore: number;
+  triggerEmergencyRain24h: number;
+  riskModelVersion: string;
+  expiresAt: Date;
   breakdown: Record<string, unknown>;
-  livePricing?: {
-    ethEurRate: number;
-    capitalLockEth: number;
-    capitalLockWei: string;
-    premiumLockEth: number;
-    premiumLockWei: string;
-    rateSource: string;
-    fetchedAt: string;
-  } | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -185,14 +220,32 @@ export type InsuranceRequest = {
 
 export type InsuranceRequestDetails = InsuranceRequest & {
   latestQuote: InsuranceQuote | null;
+  latestSettlement: QuoteSettlement | null;
   latestPremiumPayment: PremiumPayment | null;
   latestReservation: CapitalReservation | null;
+};
+
+export type QuoteSettlement = {
+  id: number;
+  quoteId: number;
+  status: string;
+  underwriterAddress: string | null;
+  premiumLockWei: string;
+  payoutCapWei: string;
+  ethEurRate: number;
+  rateSource: string;
+  rateFetchedAt: Date;
+  expiresAt: Date;
+  termsTxHash: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 export type PremiumPayment = {
   id: number;
   requestId: number;
   quoteId: number;
+  settlementId: number | null;
   payerAddress: string;
   amountEur: number;
   amountEth: number | null;
@@ -206,6 +259,7 @@ export type CapitalReservation = {
   id: number;
   requestId: number;
   quoteId: number;
+  settlementId: number | null;
   policyId: number | null;
   reservedAmountEur: number;
   reservedAmountEth: number | null;
@@ -272,7 +326,27 @@ export const mapInsuranceQuoteRecord = (record: InsuranceQuoteRecord): Insurance
   payoutCapEur: Number(record.payout_cap_eur),
   premiumRate: Number(record.premium_rate),
   premiumAmountEur: Number(record.premium_amount_eur),
+  triggerThresholdScore: record.trigger_threshold_score,
+  triggerEmergencyRain24h: record.trigger_emergency_rain_24h,
+  riskModelVersion: record.risk_model_version,
+  expiresAt: record.expires_at,
   breakdown: record.breakdown ?? {},
+  createdAt: record.created_at,
+  updatedAt: record.updated_at,
+});
+
+export const mapQuoteSettlementRecord = (record: QuoteSettlementRecord): QuoteSettlement => ({
+  id: Number(record.id),
+  quoteId: Number(record.quote_id),
+  status: record.status,
+  underwriterAddress: record.underwriter_address,
+  premiumLockWei: String(record.premium_lock_wei),
+  payoutCapWei: String(record.payout_cap_wei),
+  ethEurRate: Number(record.eth_eur_rate),
+  rateSource: record.rate_source,
+  rateFetchedAt: record.rate_fetched_at,
+  expiresAt: record.expires_at,
+  termsTxHash: record.terms_tx_hash,
   createdAt: record.created_at,
   updatedAt: record.updated_at,
 });
@@ -281,6 +355,7 @@ export const mapPremiumPaymentRecord = (record: PremiumPaymentRecord): PremiumPa
   id: Number(record.id),
   requestId: Number(record.request_id),
   quoteId: Number(record.quote_id),
+  settlementId: record.settlement_id === null ? null : Number(record.settlement_id),
   payerAddress: record.payer_address,
   amountEur: Number(record.amount_eur),
   amountEth: toNumber(record.amount_eth),
@@ -296,6 +371,7 @@ export const mapCapitalReservationRecord = (
   id: Number(record.id),
   requestId: Number(record.request_id),
   quoteId: Number(record.quote_id),
+  settlementId: record.settlement_id === null ? null : Number(record.settlement_id),
   policyId: record.policy_id === null ? null : Number(record.policy_id),
   reservedAmountEur: Number(record.reserved_amount_eur),
   reservedAmountEth: toNumber(record.reserved_amount_eth),
@@ -333,9 +409,31 @@ export const mapInsuranceRequestWithQuoteRecord = (
           payoutCapEur: toNumber(record.payout_cap_eur) ?? 0,
           premiumRate: toNumber(record.premium_rate) ?? 0,
           premiumAmountEur: toNumber(record.premium_amount_eur) ?? 0,
+          triggerThresholdScore: record.trigger_threshold_score ?? 8,
+          triggerEmergencyRain24h: record.trigger_emergency_rain_24h ?? 80,
+          riskModelVersion: record.risk_model_version ?? "legacy",
+          expiresAt: record.expires_at ?? record.created_at,
           breakdown: record.breakdown ?? {},
           createdAt: record.quote_created_at ?? record.created_at,
           updatedAt: record.quote_updated_at ?? record.updated_at,
+        },
+  latestSettlement:
+    record.settlement_id === null
+      ? null
+      : {
+          id: Number(record.settlement_id),
+          quoteId: Number(record.quote_id ?? 0),
+          status: record.settlement_status ?? "unknown",
+          underwriterAddress: record.settlement_underwriter_address ?? null,
+          premiumLockWei: String(record.settlement_premium_lock_wei ?? "0"),
+          payoutCapWei: String(record.settlement_payout_cap_wei ?? "0"),
+          ethEurRate: toNumber(record.settlement_eth_eur_rate) ?? 0,
+          rateSource: record.settlement_rate_source ?? "unknown",
+          rateFetchedAt: record.settlement_rate_fetched_at ?? record.created_at,
+          expiresAt: record.settlement_expires_at ?? record.created_at,
+          termsTxHash: record.settlement_terms_tx_hash ?? null,
+          createdAt: record.settlement_created_at ?? record.created_at,
+          updatedAt: record.settlement_updated_at ?? record.created_at,
         },
   latestPremiumPayment:
     record.payment_id === null
@@ -344,6 +442,8 @@ export const mapInsuranceRequestWithQuoteRecord = (
           id: Number(record.payment_id),
           requestId: Number(record.id),
           quoteId: Number(record.quote_id ?? 0),
+          settlementId:
+            record.payment_settlement_id === null ? null : Number(record.payment_settlement_id),
           payerAddress: record.payment_payer_address ?? "",
           amountEur: toNumber(record.payment_amount_eur) ?? 0,
           amountEth: toNumber(record.payment_amount_eth),
@@ -359,6 +459,10 @@ export const mapInsuranceRequestWithQuoteRecord = (
           id: Number(record.reservation_id),
           requestId: Number(record.id),
           quoteId: Number(record.quote_id ?? 0),
+          settlementId:
+            record.reservation_settlement_id === null
+              ? null
+              : Number(record.reservation_settlement_id),
           policyId: record.reservation_policy_id === null ? null : Number(record.reservation_policy_id),
           reservedAmountEur: toNumber(record.reserved_amount_eur) ?? 0,
           reservedAmountEth: toNumber(record.reserved_amount_eth),

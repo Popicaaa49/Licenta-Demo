@@ -27,6 +27,13 @@ contract InsuranceEscrow {
         Released
     }
 
+    enum QuoteTermsState {
+        Uninitialized,
+        Active,
+        Converted,
+        Cancelled
+    }
+
     struct Policy {
         address user;
         address underwriter;
@@ -75,6 +82,20 @@ contract InsuranceEscrow {
         PremiumLockState state;
     }
 
+    struct QuoteTerms {
+        address farmer;
+        string locationId;
+        string cropType;
+        uint32 thresholdScore;
+        uint32 emergencyRain24h;
+        uint256 premiumAmount;
+        uint256 payoutAmount;
+        uint64 startTime;
+        uint64 endTime;
+        uint64 expiresAt;
+        QuoteTermsState state;
+    }
+
     uint32 public constant DEFAULT_THRESHOLD_SCORE = 8;
     uint32 public constant DEFAULT_EMERGENCY_RAIN_24H = 80;
 
@@ -92,6 +113,7 @@ contract InsuranceEscrow {
     mapping(address => CapitalAccount) private underwriterCapital;
     mapping(uint256 => QuoteLock) private quoteLocks;
     mapping(uint256 => PremiumLock) private premiumLocks;
+    mapping(uint256 => QuoteTerms) private quoteTerms;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event OracleUpdated(address indexed previousOracle, address indexed newOracle);
@@ -126,6 +148,15 @@ contract InsuranceEscrow {
         address indexed farmer,
         uint256 amount
     );
+    event QuoteRegistered(
+        uint256 indexed quoteId,
+        address indexed farmer,
+        uint256 premiumAmount,
+        uint256 payoutAmount,
+        uint32 thresholdScore,
+        uint32 emergencyRain24h,
+        uint64 expiresAt
+    );
     event QuoteCapitalConverted(
         uint256 indexed quoteId,
         uint256 indexed policyId,
@@ -138,6 +169,7 @@ contract InsuranceEscrow {
         address indexed farmer,
         uint256 amount
     );
+    event QuoteTermsConverted(uint256 indexed quoteId, uint256 indexed policyId);
     event PolicyCreated(
         uint256 indexed policyId,
         address indexed user,
@@ -181,6 +213,12 @@ contract InsuranceEscrow {
     error InsufficientUnlockedLiquidity();
     error InvalidCapitalAmount();
     error InvalidQuoteId();
+    error QuoteTermsAlreadyRegistered();
+    error QuoteTermsNotActive();
+    error QuoteExpired();
+    error QuoteFarmerMismatch();
+    error QuotePremiumAmountMismatch();
+    error QuoteCapitalAmountMismatch();
     error InsufficientUnderwriterCapital();
     error QuoteCapitalUnavailable();
     error QuoteLockNotFound();
@@ -313,9 +351,68 @@ contract InsuranceEscrow {
         return (premiumLock.farmer, premiumLock.amount, premiumLock.state);
     }
 
-    function lockCapitalForQuote(uint256 quoteId, uint256 amount) external {
+    function getQuoteTerms(uint256 quoteId) external view returns (QuoteTerms memory terms) {
+        terms = quoteTerms[quoteId];
+        if (terms.state == QuoteTermsState.Uninitialized) revert QuoteTermsNotActive();
+    }
+
+    function registerQuote(
+        uint256 quoteId,
+        address farmer,
+        string memory locationId,
+        string memory cropType,
+        uint32 thresholdScore,
+        uint32 emergencyRain24h,
+        uint256 premiumAmount,
+        uint256 payoutAmount,
+        uint64 startTime,
+        uint64 endTime,
+        uint64 expiresAt
+    ) external onlyOwner {
         if (quoteId == 0) revert InvalidQuoteId();
-        if (amount == 0) revert InvalidCapitalAmount();
+        if (quoteTerms[quoteId].state != QuoteTermsState.Uninitialized) {
+            revert QuoteTermsAlreadyRegistered();
+        }
+        if (farmer == address(0)) revert InvalidUser();
+        if (bytes(locationId).length == 0) revert InvalidLocation();
+        if (bytes(cropType).length == 0) revert InvalidCropType();
+        if (premiumAmount == 0 || payoutAmount == 0) revert InvalidCapitalAmount();
+        if (thresholdScore == 0 || emergencyRain24h == 0) revert InvalidTriggerThreshold();
+        if (endTime <= startTime) revert InvalidTimeRange();
+        if (expiresAt <= block.timestamp) revert QuoteExpired();
+
+        quoteTerms[quoteId] = QuoteTerms({
+            farmer: farmer,
+            locationId: locationId,
+            cropType: cropType,
+            thresholdScore: thresholdScore,
+            emergencyRain24h: emergencyRain24h,
+            premiumAmount: premiumAmount,
+            payoutAmount: payoutAmount,
+            startTime: startTime,
+            endTime: endTime,
+            expiresAt: expiresAt,
+            state: QuoteTermsState.Active
+        });
+
+        emit QuoteRegistered(
+            quoteId,
+            farmer,
+            premiumAmount,
+            payoutAmount,
+            thresholdScore,
+            emergencyRain24h,
+            expiresAt
+        );
+    }
+
+    function lockCapitalForQuote(uint256 quoteId, uint256 amount) external {
+        QuoteTerms storage terms = _getQuoteTermsForLockedSettlement(quoteId);
+        if (amount != terms.payoutAmount) revert QuoteCapitalAmountMismatch();
+
+        PremiumLock storage premiumLock = _getPremiumLockForMutation(quoteId);
+        if (premiumLock.state != PremiumLockState.Locked) revert PremiumLockNotActive();
+        if (premiumLock.amount != terms.premiumAmount) revert QuotePremiumAmountMismatch();
 
         QuoteLock storage existing = quoteLocks[quoteId];
         if (existing.state == QuoteLockState.Locked) revert QuoteLockAlreadyBound();
@@ -339,8 +436,9 @@ contract InsuranceEscrow {
     }
 
     function lockPremiumForQuote(uint256 quoteId) external payable {
-        if (quoteId == 0) revert InvalidQuoteId();
-        if (msg.value == 0) revert InvalidCapitalAmount();
+        QuoteTerms storage terms = _getActiveQuoteTerms(quoteId);
+        if (msg.sender != terms.farmer) revert QuoteFarmerMismatch();
+        if (msg.value != terms.premiumAmount) revert QuotePremiumAmountMismatch();
 
         PremiumLock storage existing = premiumLocks[quoteId];
         if (existing.state == PremiumLockState.Locked) revert PremiumLockAlreadyBound();
@@ -416,39 +514,32 @@ contract InsuranceEscrow {
         lockedReserve += payoutAmount;
     }
 
-    function createPolicyFromQuote(
-        uint256 quoteId,
-        address user,
-        string calldata locationId,
-        string calldata cropType,
-        uint32 thresholdScore,
-        uint32 emergencyRain24h,
-        uint64 startTime,
-        uint64 endTime
-    ) external onlyOwner returns (uint256 policyId) {
+    function createPolicyFromQuote(uint256 quoteId) external onlyOwner returns (uint256 policyId) {
+        QuoteTerms storage terms = _getQuoteTermsForLockedSettlement(quoteId);
         QuoteLock storage quoteLock = _getQuoteLockForMutation(quoteId);
         if (quoteLock.state != QuoteLockState.Locked) revert QuoteLockNotActive();
-        if (quoteLock.amount == 0) revert QuoteCapitalUnavailable();
+        if (quoteLock.amount != terms.payoutAmount) revert QuoteCapitalAmountMismatch();
 
         PremiumLock storage premiumLock = _getPremiumLockForMutation(quoteId);
         if (premiumLock.state != PremiumLockState.Locked) revert PremiumLockNotActive();
-        if (premiumLock.amount == 0) revert InvalidCapitalAmount();
+        if (premiumLock.amount != terms.premiumAmount) revert QuotePremiumAmountMismatch();
 
         policyId = _createPolicyRecord(
-            user,
+            terms.farmer,
             quoteLock.underwriter,
-            locationId,
-            cropType,
-            thresholdScore,
-            emergencyRain24h,
+            terms.locationId,
+            terms.cropType,
+            terms.thresholdScore,
+            terms.emergencyRain24h,
             premiumLock.amount,
             quoteLock.amount,
-            startTime,
-            endTime
+            terms.startTime,
+            terms.endTime
         );
 
         quoteLock.state = QuoteLockState.Converted;
         premiumLock.state = PremiumLockState.Converted;
+        terms.state = QuoteTermsState.Converted;
 
         emit QuoteCapitalConverted(
             quoteId,
@@ -462,6 +553,7 @@ contract InsuranceEscrow {
             premiumLock.farmer,
             premiumLock.amount
         );
+        emit QuoteTermsConverted(quoteId, policyId);
     }
 
     function cancelPolicy(uint256 policyId) external onlyOwner {
@@ -562,8 +654,8 @@ contract InsuranceEscrow {
     function _createPolicyRecord(
         address user,
         address underwriter,
-        string calldata locationId,
-        string calldata cropType,
+        string memory locationId,
+        string memory cropType,
         uint32 thresholdScore,
         uint32 emergencyRain24h,
         uint256 premiumAmount,
@@ -622,6 +714,25 @@ contract InsuranceEscrow {
             startTime,
             endTime
         );
+    }
+
+    function _getActiveQuoteTerms(
+        uint256 quoteId
+    ) private view returns (QuoteTerms storage terms) {
+        if (quoteId == 0) revert InvalidQuoteId();
+
+        terms = quoteTerms[quoteId];
+        if (terms.state != QuoteTermsState.Active) revert QuoteTermsNotActive();
+        if (block.timestamp > terms.expiresAt) revert QuoteExpired();
+    }
+
+    function _getQuoteTermsForLockedSettlement(
+        uint256 quoteId
+    ) private view returns (QuoteTerms storage terms) {
+        if (quoteId == 0) revert InvalidQuoteId();
+
+        terms = quoteTerms[quoteId];
+        if (terms.state != QuoteTermsState.Active) revert QuoteTermsNotActive();
     }
 
     function _releasePolicyReserve(Policy storage policy) private {

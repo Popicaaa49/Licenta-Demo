@@ -22,6 +22,20 @@ export type CreatePolicyParams = {
   endTime: Date;
 };
 
+export type RegisterQuoteParams = {
+  quoteId: number;
+  farmerAddress: string;
+  locationId: string;
+  cropType: string;
+  thresholdScore: number;
+  emergencyRain24h: number;
+  premiumAmountWei: bigint;
+  payoutAmountWei: bigint;
+  startTime: Date;
+  endTime: Date;
+  expiresAt: Date;
+};
+
 type PolicySnapshot = {
   user: string;
   underwriter: string;
@@ -99,48 +113,94 @@ export class InsuranceContractClient {
     return new Contract(env.insuranceContractAddress, this.abi, this.provider);
   }
 
-  async createPolicy(params: CreatePolicyParams) {
-    const contract = this.getOwnerContract();
-    const nextId = Number(await contract.policyCount());
-
-    const tx = await contract.createPolicy(
-      params.userAddress,
-      params.locationId,
-      params.cropType,
-      params.thresholdScore,
-      params.emergencyRain24h,
-      params.payoutAmountWei,
-      BigInt(Math.floor(params.startTime.getTime() / 1000)),
-      BigInt(Math.floor(params.endTime.getTime() / 1000))
-    );
-    const receipt = await tx.wait();
-
-    return {
-      policyId: nextId,
-      txHash: receipt?.hash ?? tx.hash,
-    };
+  async getOwner() {
+    const contract = this.getReadContract();
+    return String(await contract.owner());
   }
 
-  async createPolicyFromQuote(params: Omit<CreatePolicyParams, "payoutAmountWei"> & { quoteId: number }) {
-    const contract = this.getOwnerContract();
-    const nextId = Number(await contract.policyCount());
+  private isNonceExpiredError(error: unknown) {
+    if (!(error instanceof Error)) {
+      return false;
+    }
 
-    const tx = await contract.createPolicyFromQuote(
-      BigInt(params.quoteId),
-      params.userAddress,
-      params.locationId,
-      params.cropType,
-      params.thresholdScore,
-      params.emergencyRain24h,
-      BigInt(Math.floor(params.startTime.getTime() / 1000)),
-      BigInt(Math.floor(params.endTime.getTime() / 1000))
-    );
-    const receipt = await tx.wait();
+    const maybeCode = (error as { code?: unknown }).code;
+    return maybeCode === "NONCE_EXPIRED" || /nonce too low|nonce has already been used/i.test(error.message);
+  }
 
-    return {
-      policyId: nextId,
-      txHash: receipt?.hash ?? tx.hash,
-    };
+  private async withOwnerNonceRetry<T>(operation: () => Promise<T>) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!this.isNonceExpiredError(error)) {
+        throw error;
+      }
+
+      this.ownerSigner?.reset();
+      return operation();
+    }
+  }
+
+  async createPolicy(params: CreatePolicyParams) {
+    return this.withOwnerNonceRetry(async () => {
+      const contract = this.getOwnerContract();
+      const nextId = Number(await contract.policyCount());
+
+      const tx = await contract.createPolicy(
+        params.userAddress,
+        params.locationId,
+        params.cropType,
+        params.thresholdScore,
+        params.emergencyRain24h,
+        params.payoutAmountWei,
+        BigInt(Math.floor(params.startTime.getTime() / 1000)),
+        BigInt(Math.floor(params.endTime.getTime() / 1000))
+      );
+      const receipt = await tx.wait();
+
+      return {
+        policyId: nextId,
+        txHash: receipt?.hash ?? tx.hash,
+      };
+    });
+  }
+
+  async registerQuote(params: RegisterQuoteParams) {
+    return this.withOwnerNonceRetry(async () => {
+      const contract = this.getOwnerContract();
+      const tx = await contract.registerQuote(
+        BigInt(params.quoteId),
+        params.farmerAddress,
+        params.locationId,
+        params.cropType,
+        params.thresholdScore,
+        params.emergencyRain24h,
+        params.premiumAmountWei,
+        params.payoutAmountWei,
+        BigInt(Math.floor(params.startTime.getTime() / 1000)),
+        BigInt(Math.floor(params.endTime.getTime() / 1000)),
+        BigInt(Math.floor(params.expiresAt.getTime() / 1000))
+      );
+      const receipt = await tx.wait();
+
+      return {
+        txHash: receipt?.hash ?? tx.hash,
+      };
+    });
+  }
+
+  async createPolicyFromQuote(quoteId: number) {
+    return this.withOwnerNonceRetry(async () => {
+      const contract = this.getOwnerContract();
+      const nextId = Number(await contract.policyCount());
+
+      const tx = await contract.createPolicyFromQuote(BigInt(quoteId));
+      const receipt = await tx.wait();
+
+      return {
+        policyId: nextId,
+        txHash: receipt?.hash ?? tx.hash,
+      };
+    });
   }
 
   async submitWeatherReport(policyId: number, report: OracleReportPayload) {
@@ -239,8 +299,8 @@ export class InsuranceContractClient {
           : null,
       lastRiskScore: Number(policy.lastRiskScore),
       payoutTriggered: policy.payoutTriggered,
-      state: policy.state,
-      active: policy.state === 0,
+      state: Number(policy.state),
+      active: Number(policy.state) === 0,
     };
   }
 

@@ -25,6 +25,10 @@ export type CreateInsuranceQuoteInput = {
   payoutCapEur: number;
   premiumRate: number;
   premiumAmountEur: number;
+  triggerThresholdScore: number;
+  triggerEmergencyRain24h: number;
+  riskModelVersion: string;
+  expiresAt: Date;
   breakdown: Record<string, unknown>;
 };
 
@@ -52,12 +56,16 @@ export class InsuranceQuoteRepository {
           payout_cap_eur,
           premium_rate,
           premium_amount_eur,
+          trigger_threshold_score,
+          trigger_emergency_rain_24h,
+          risk_model_version,
+          expires_at,
           breakdown
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
           $10, $11, $12, $13, $14, $15, $16,
-          $17, $18, $19, $20, $21::jsonb
+          $17, $18, $19, $20, $21, $22, $23, $24, $25::jsonb
         )
         RETURNING *`,
       [
@@ -81,6 +89,10 @@ export class InsuranceQuoteRepository {
         input.payoutCapEur,
         input.premiumRate,
         input.premiumAmountEur,
+        input.triggerThresholdScore,
+        input.triggerEmergencyRain24h,
+        input.riskModelVersion,
+        input.expiresAt,
         JSON.stringify(input.breakdown),
       ]
     );

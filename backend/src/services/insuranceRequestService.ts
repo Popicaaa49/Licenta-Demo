@@ -1,11 +1,15 @@
 import { ethers } from "ethers";
-import { env } from "../config/env";
 import { InsuranceContractClient } from "../blockchain/insuranceContractClient";
-import { CropReferenceRepository } from "../repositories/cropReferenceRepository";
+import { env } from "../config/env";
 import { CapitalReservationRepository } from "../repositories/capitalReservationRepository";
+import { CropReferenceRepository } from "../repositories/cropReferenceRepository";
 import { InsuranceQuoteRepository } from "../repositories/insuranceQuoteRepository";
 import { InsuranceRequestRepository } from "../repositories/insuranceRequestRepository";
+import { NotificationRepository } from "../repositories/notificationRepository";
 import { PremiumPaymentRepository } from "../repositories/premiumPaymentRepository";
+import { QuoteSettlementRepository } from "../repositories/quoteSettlementRepository";
+import { buildPolicyTriggerConfiguration } from "../risk/riskEngine";
+import { InsuranceQuote, InsuranceRequestDetails, QuoteSettlement } from "../types/underwriting";
 import { ContractService } from "./contractService";
 import { EthMarketDataService } from "./ethMarketDataService";
 import { LocationIntakeService } from "./locationIntakeService";
@@ -27,14 +31,24 @@ export type CreateInsuranceRequestInput = {
 type InsuranceRequestServiceDeps = {
   requestRepository?: InsuranceRequestRepository;
   quoteRepository?: InsuranceQuoteRepository;
+  settlementRepository?: QuoteSettlementRepository;
   premiumPaymentRepository?: PremiumPaymentRepository;
   capitalReservationRepository?: CapitalReservationRepository;
+  notificationRepository?: NotificationRepository;
   cropReferenceRepository?: CropReferenceRepository;
   underwritingService?: UnderwritingService;
   locationIntakeService?: LocationIntakeService;
   contractService?: ContractService;
   insuranceClient?: InsuranceContractClient;
   ethMarketDataService?: EthMarketDataService;
+};
+
+const normalizeAddress = (address?: string | null) => {
+  if (!address || !ethers.isAddress(address)) {
+    return null;
+  }
+
+  return address.toLowerCase();
 };
 
 const parseArea = (value: number | string | null | undefined) => {
@@ -45,10 +59,19 @@ const parseArea = (value: number | string | null | undefined) => {
   return Number(value);
 };
 
-const hasLockedPremium = (status: string | undefined | null) => status === "locked";
-const hasLockedCapital = (status: string | undefined | null) => status === "locked";
+const isLocked = (status: string | undefined | null) => status === "locked";
+
+const settlementIsOpen = (status: string) =>
+  ["prepared", "premium_locked", "ready_for_activation"].includes(status);
+
+const PUBLIC_REQUEST_STATUSES = new Set([
+  "quoted",
+  "awaiting_farmer_lock",
+  "awaiting_underwriter",
+]);
 
 const deriveRequestStatus = (input: {
+  settlementPrepared: boolean;
   premiumLocked: boolean;
   capitalLocked: boolean;
 }) => {
@@ -61,17 +84,19 @@ const deriveRequestStatus = (input: {
   }
 
   if (input.capitalLocked) {
-    return "awaiting_premium";
+    return "awaiting_farmer_lock";
   }
 
-  return "awaiting_farmer_lock";
+  return input.settlementPrepared ? "awaiting_farmer_lock" : "quoted";
 };
 
 export class InsuranceRequestService {
   private readonly requestRepository: InsuranceRequestRepository;
   private readonly quoteRepository: InsuranceQuoteRepository;
+  private readonly settlementRepository: QuoteSettlementRepository;
   private readonly premiumPaymentRepository: PremiumPaymentRepository;
   private readonly capitalReservationRepository: CapitalReservationRepository;
+  private readonly notificationRepository: NotificationRepository;
   private readonly cropReferenceRepository: CropReferenceRepository;
   private readonly underwritingService: UnderwritingService;
   private readonly locationIntakeService: LocationIntakeService;
@@ -82,15 +107,16 @@ export class InsuranceRequestService {
   constructor(deps: InsuranceRequestServiceDeps = {}) {
     this.requestRepository = deps.requestRepository ?? new InsuranceRequestRepository();
     this.quoteRepository = deps.quoteRepository ?? new InsuranceQuoteRepository();
+    this.settlementRepository = deps.settlementRepository ?? new QuoteSettlementRepository();
     this.premiumPaymentRepository =
       deps.premiumPaymentRepository ?? new PremiumPaymentRepository();
     this.capitalReservationRepository =
       deps.capitalReservationRepository ?? new CapitalReservationRepository();
+    this.notificationRepository = deps.notificationRepository ?? new NotificationRepository();
     this.cropReferenceRepository =
       deps.cropReferenceRepository ?? new CropReferenceRepository();
     this.underwritingService = deps.underwritingService ?? new UnderwritingService();
-    this.locationIntakeService =
-      deps.locationIntakeService ?? new LocationIntakeService();
+    this.locationIntakeService = deps.locationIntakeService ?? new LocationIntakeService();
     this.contractService = deps.contractService ?? new ContractService();
     this.insuranceClient = deps.insuranceClient ?? new InsuranceContractClient();
     this.ethMarketDataService =
@@ -102,14 +128,35 @@ export class InsuranceRequestService {
     return this.cropReferenceRepository.listActive();
   }
 
-  async listRequests() {
+  async listRequests(viewerAddress?: string | null) {
     const requests = await this.requestRepository.listAllWithLatestQuote();
-    return Promise.all(requests.map((request) => this.enrichRequestWithLivePricing(request)));
+    const viewer = normalizeAddress(viewerAddress);
+
+    return requests.filter((request) => this.canViewRequest(request, viewer));
   }
 
   async getRequest(id: number) {
-    const request = await this.requestRepository.getByIdWithLatestQuote(id);
-    return this.enrichRequestWithLivePricing(request);
+    return this.requestRepository.getByIdWithLatestQuote(id);
+  }
+
+  canViewRequest(request: InsuranceRequestDetails, viewerAddress?: string | null) {
+    if (PUBLIC_REQUEST_STATUSES.has(request.status)) {
+      return true;
+    }
+
+    const viewer = normalizeAddress(viewerAddress);
+    if (!viewer) {
+      return false;
+    }
+
+    const underwriterAddress = request.latestSettlement?.underwriterAddress;
+    const isFarmer = request.farmerAddress.toLowerCase() === viewer;
+    const isUnderwriter =
+      !!underwriterAddress &&
+      ethers.isAddress(underwriterAddress) &&
+      underwriterAddress.toLowerCase() === viewer;
+
+    return isFarmer || isUnderwriter;
   }
 
   async createRequest(input: CreateInsuranceRequestInput) {
@@ -129,14 +176,9 @@ export class InsuranceRequestService {
 
     const coverageStart = new Date(input.coverageStart);
     const coverageEnd = new Date(input.coverageEnd);
-
-    if (
-      Number.isNaN(coverageStart.getTime()) ||
-      Number.isNaN(coverageEnd.getTime())
-    ) {
+    if (Number.isNaN(coverageStart.getTime()) || Number.isNaN(coverageEnd.getTime())) {
       throw new Error("coverageStart and coverageEnd must be valid ISO timestamps.");
     }
-
     if (coverageEnd <= coverageStart) {
       throw new Error("coverageEnd must be greater than coverageStart.");
     }
@@ -167,7 +209,7 @@ export class InsuranceRequestService {
       areaHa,
       coverageStart,
       coverageEnd,
-      status: "awaiting_farmer_lock",
+      status: "quoted",
     });
 
     const quoteDraft = await this.underwritingService.buildQuote({
@@ -177,6 +219,12 @@ export class InsuranceRequestService {
       coverageStart,
       coverageEnd,
     });
+    const triggerConfiguration = buildPolicyTriggerConfiguration({
+      cropType,
+      coverageStart,
+      riskTier: quoteDraft.riskTier,
+    });
+    const expiresAt = new Date(Date.now() + env.quoteValidityDays * 24 * 60 * 60 * 1000);
 
     const quote = await this.quoteRepository.create({
       requestId: request.id,
@@ -199,165 +247,119 @@ export class InsuranceRequestService {
       payoutCapEur: quoteDraft.payoutCapEur,
       premiumRate: quoteDraft.premiumRate,
       premiumAmountEur: quoteDraft.premiumAmountEur,
-      breakdown: quoteDraft.breakdown,
+      triggerThresholdScore: triggerConfiguration.thresholdScore,
+      triggerEmergencyRain24h: triggerConfiguration.emergencyRain24h,
+      riskModelVersion: triggerConfiguration.riskModelVersion,
+      expiresAt,
+      breakdown: {
+        ...quoteDraft.breakdown,
+        trigger: triggerConfiguration,
+        commercialQuote: {
+          currency: "EUR",
+          expiresAt: expiresAt.toISOString(),
+        },
+      },
     });
 
-    return {
-      request,
-      quote: await this.enrichQuoteWithLivePricing(quote),
-      location,
-    };
+    await this.notify([request.farmerAddress], {
+      type: "quote_created",
+      title: "Oferta EUR a fost generata",
+      message: `Cererea #${request.id} pentru ${request.cropType} are o oferta de ${quote.premiumAmountEur.toFixed(2)} EUR premium si payout maxim ${quote.payoutCapEur.toFixed(2)} EUR.`,
+      entityType: "insurance_request",
+      entityId: request.id,
+      dedupeKey: `quote_created:${quote.id}`,
+      metadata: {
+        quoteId: quote.id,
+        premiumAmountEur: quote.premiumAmountEur,
+        payoutCapEur: quote.payoutCapEur,
+      },
+    });
+
+    return { request, quote, location };
   }
 
-  async lockLatestQuoteCapital(input: {
-    requestId: number;
-    underwriterAddress: string;
-    lockedAmountEth: string;
-    transactionHash?: string | null;
-  }) {
-    if (!ethers.isAddress(input.underwriterAddress)) {
-      throw new Error("underwriterAddress must be a valid Ethereum address.");
-    }
+  async prepareSettlement(input: { requestId: number }) {
+    const request = await this.requireRequest(input.requestId);
+    const quote = this.requireQuote(request);
+    await this.ensureCommercialQuoteUsable(request, quote);
 
-    let expectedAmountWei: bigint;
-    try {
-      expectedAmountWei = ethers.parseEther(input.lockedAmountEth);
-    } catch {
-      throw new Error("lockedAmountEth must be a valid ETH amount.");
-    }
+    if (request.latestSettlement?.status === "prepared") {
+      if (request.latestSettlement.expiresAt.getTime() > Date.now()) {
+        throw new Error("An active settlement session already exists for this quote.");
+      }
 
-    if (expectedAmountWei <= 0n) {
-      throw new Error("lockedAmountEth must be greater than zero.");
-    }
-
-    const request = await this.requestRepository.getByIdWithLatestQuote(input.requestId);
-    if (!request) {
-      throw new Error("Insurance request not found.");
-    }
-
-    if (!request.latestQuote) {
-      throw new Error("Insurance request does not have a generated quote.");
-    }
-
-    if (!request.latestPremiumPayment || request.latestPremiumPayment.status !== "locked") {
-      throw new Error("Premium must be locked before an underwriter can lock capital.");
-    }
-
-    if (request.latestQuote.status !== "open") {
-      throw new Error("Only open quotes can be locked.");
-    }
-
-    const livePricing = await this.ethMarketDataService
-      .getLiveEthPricing({
-        payoutCapEur: request.latestQuote.payoutCapEur,
-        premiumAmountEur: request.latestQuote.premiumAmountEur,
-      })
-      .catch(() => null);
-    if (livePricing && expectedAmountWei < BigInt(livePricing.capitalLockWei)) {
+      await this.settlementRepository.updateStatus({
+        id: request.latestSettlement.id,
+        status: "expired",
+      });
+    } else if (
+      request.latestSettlement &&
+      settlementIsOpen(request.latestSettlement.status)
+    ) {
       throw new Error(
-        `Locked capital is below the live requirement. Required: ${livePricing.capitalLockEth} ETH for ${request.latestQuote.payoutCapEur} EUR at ${livePricing.ethEurRate} EUR/ETH.`
+        "Settlement already has locked funds. Release the current locks before preparing a new settlement."
       );
     }
 
-    const quoteLock = await this.insuranceClient.getQuoteLock(request.latestQuote.id);
-    if (quoteLock.state !== 1) {
-      throw new Error("Quote capital is not locked on-chain.");
-    }
-
-    if (quoteLock.underwriterAddress.toLowerCase() !== input.underwriterAddress.toLowerCase()) {
-      throw new Error("The on-chain quote lock belongs to another underwriter.");
-    }
-
-    if (quoteLock.amountWei !== expectedAmountWei) {
-      throw new Error("The locked on-chain capital does not match the requested ETH amount.");
-    }
-
-    const normalizedAmountEth = ethers.formatEther(expectedAmountWei);
-
-    const quote = await this.quoteRepository.updateCapitalLock({
-      id: request.latestQuote.id,
-      underwriterAddress: input.underwriterAddress,
-      status: "locked",
-      lockedAmountEth: normalizedAmountEth,
-      capitalLockTxHash: input.transactionHash ?? null,
+    const settlementTerms = await this.ethMarketDataService.getQuoteSettlementTerms({
+      payoutCapEur: quote.payoutCapEur,
+      premiumAmountEur: quote.premiumAmountEur,
     });
-    if (!quote) {
-      throw new Error("Failed to update quote lock metadata.");
-    }
-
-    await this.capitalReservationRepository.create({
-      requestId: request.id,
-      quoteId: request.latestQuote.id,
-      policyId: null,
-      reservedAmountEur: request.latestQuote.payoutCapEur,
-      reservedAmountEth: normalizedAmountEth,
-      status: "quote_locked",
-    });
-
-    await this.requestRepository.updateStatus(
-      request.id,
-      deriveRequestStatus({
-        premiumLocked: hasLockedPremium(request.latestPremiumPayment?.status),
-        capitalLocked: true,
-      })
+    const expiresAt = new Date(
+      Date.now() + env.settlementValidityMinutes * 60 * 1000
     );
-
-    return this.requestRepository.getByIdWithLatestQuote(request.id);
-  }
-
-  async releaseLockedQuoteCapital(input: {
-    requestId: number;
-    underwriterAddress: string;
-  }) {
-    if (!ethers.isAddress(input.underwriterAddress)) {
-      throw new Error("underwriterAddress must be a valid Ethereum address.");
-    }
-
-    const request = await this.requestRepository.getByIdWithLatestQuote(input.requestId);
-    if (!request) {
-      throw new Error("Insurance request not found.");
-    }
-
-    if (!request.latestQuote) {
-      throw new Error("Insurance request does not have a generated quote.");
-    }
-
-    if (request.latestQuote.status !== "locked") {
-      throw new Error("Only locked quotes can release capital.");
-    }
-
-    const quoteLock = await this.insuranceClient.getQuoteLock(request.latestQuote.id);
-    if (quoteLock.state !== 3) {
-      throw new Error("Quote capital has not been released on-chain.");
-    }
-
-    if (quoteLock.underwriterAddress.toLowerCase() !== input.underwriterAddress.toLowerCase()) {
-      throw new Error("The released quote lock belongs to another underwriter.");
-    }
-
-    const quote = await this.quoteRepository.updateCapitalLock({
-      id: request.latestQuote.id,
-      underwriterAddress: "system",
-      status: "open",
-      lockedAmountEth: null,
-      capitalLockTxHash: null,
+    const settlement = await this.settlementRepository.create({
+      quoteId: quote.id,
+      status: "prepared",
+      premiumLockWei: settlementTerms.premiumLockWei,
+      payoutCapWei: settlementTerms.capitalLockWei,
+      ethEurRate: settlementTerms.ethEurRate,
+      rateSource: settlementTerms.rateSource,
+      rateFetchedAt: new Date(settlementTerms.fetchedAt),
+      expiresAt,
     });
-    if (!quote) {
-      throw new Error("Failed to reset quote lock metadata.");
+
+    try {
+      const registration = await this.insuranceClient.registerQuote({
+        quoteId: settlement.id,
+        farmerAddress: request.farmerAddress,
+        locationId: request.locationId,
+        cropType: request.cropType,
+        thresholdScore: quote.triggerThresholdScore,
+        emergencyRain24h: quote.triggerEmergencyRain24h,
+        premiumAmountWei: BigInt(settlement.premiumLockWei),
+        payoutAmountWei: BigInt(settlement.payoutCapWei),
+        startTime: request.coverageStart,
+        endTime: request.coverageEnd,
+        expiresAt: settlement.expiresAt,
+      });
+      await this.settlementRepository.updateTermsRegistration(settlement.id, registration.txHash);
+    } catch (error) {
+      await this.settlementRepository.updateStatus({
+        id: settlement.id,
+        status: "registration_failed",
+      });
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Settlement terms could not be registered on-chain. ${message}`);
     }
 
-    await this.capitalReservationRepository.updateStatusByQuoteId({
-      quoteId: request.latestQuote.id,
-      status: "released",
+    await this.requestRepository.updateStatus(request.id, "awaiting_farmer_lock");
+    await this.notify([request.farmerAddress], {
+      type: "settlement_prepared",
+      title: "Settlement ETH pregatit",
+      message: `Cererea #${request.id} are settlement ETH pregatit. Fermierul trebuie sa blocheze premium-ul.`,
+      entityType: "insurance_request",
+      entityId: request.id,
+      dedupeKey: `settlement_prepared:${settlement.id}`,
+      metadata: {
+        quoteId: quote.id,
+        settlementId: settlement.id,
+        premiumLockWei: settlement.premiumLockWei,
+        payoutCapWei: settlement.payoutCapWei,
+        ethEurRate: settlement.ethEurRate,
+        expiresAt: settlement.expiresAt.toISOString(),
+      },
     });
-    await this.requestRepository.updateStatus(
-      request.id,
-      deriveRequestStatus({
-        premiumLocked: hasLockedPremium(request.latestPremiumPayment?.status),
-        capitalLocked: false,
-      })
-    );
-
     return this.requestRepository.getByIdWithLatestQuote(request.id);
   }
 
@@ -371,58 +373,63 @@ export class InsuranceRequestService {
       throw new Error("payerAddress must be a valid Ethereum address.");
     }
 
-    const request = await this.requestRepository.getByIdWithLatestQuote(input.requestId);
-    if (!request) {
-      throw new Error("Insurance request not found.");
-    }
-
-    if (!request.latestQuote) {
-      throw new Error("Insurance request does not have a generated quote.");
-    }
+    const request = await this.requireRequest(input.requestId);
+    const quote = this.requireQuote(request);
+    const settlement = this.requireSettlement(request);
+    await this.ensureCommercialQuoteUsable(request, quote);
+    await this.ensureSettlementUsable(request, settlement);
 
     if (request.farmerAddress.toLowerCase() !== input.payerAddress.toLowerCase()) {
       throw new Error("Only the farmer attached to the request can lock the premium.");
     }
 
-    const premiumLock = await this.insuranceClient.getPremiumLock(request.latestQuote.id);
+    const premiumLock = await this.insuranceClient.getPremiumLock(settlement.id);
     if (premiumLock.state !== 1) {
       throw new Error("Premium is not locked on-chain.");
     }
-
-    const livePricing = await this.ethMarketDataService
-      .getLiveEthPricing({
-        payoutCapEur: request.latestQuote.payoutCapEur,
-        premiumAmountEur: request.latestQuote.premiumAmountEur,
-      })
-      .catch(() => null);
-    if (livePricing && premiumLock.amountWei < BigInt(livePricing.premiumLockWei)) {
-      throw new Error(
-        `Premium lock is below the live requirement. Required: ${livePricing.premiumLockEth} ETH for ${request.latestQuote.premiumAmountEur} EUR at ${livePricing.ethEurRate} EUR/ETH.`
-      );
-    }
-
     if (premiumLock.farmerAddress.toLowerCase() !== input.payerAddress.toLowerCase()) {
       throw new Error("The on-chain premium lock belongs to another farmer.");
+    }
+    if (premiumLock.amountWei !== BigInt(settlement.premiumLockWei)) {
+      throw new Error("The locked on-chain premium does not match the settlement terms.");
     }
 
     const payment = await this.premiumPaymentRepository.create({
       requestId: request.id,
-      quoteId: request.latestQuote.id,
+      quoteId: quote.id,
+      settlementId: settlement.id,
       payerAddress: input.payerAddress,
-      amountEur: request.latestQuote.premiumAmountEur,
+      amountEur: quote.premiumAmountEur,
       amountEth: premiumLock.amountEth,
       asset: input.asset ?? "ETH_ESCROW",
       transactionHash: input.transactionHash ?? null,
       status: "locked",
     });
 
+    await this.settlementRepository.updateStatus({ id: settlement.id, status: "premium_locked" });
     await this.requestRepository.updateStatus(
       request.id,
       deriveRequestStatus({
+        settlementPrepared: true,
         premiumLocked: true,
-        capitalLocked: hasLockedCapital(request.latestQuote.status),
+        capitalLocked: isLocked(request.latestReservation?.status),
       })
     );
+
+    await this.notify([request.farmerAddress], {
+      type: "premium_locked",
+      title: "Premium blocat",
+      message: `Premium-ul pentru cererea #${request.id} a fost blocat. Cererea poate fi preluata de un underwriter.`,
+      entityType: "insurance_request",
+      entityId: request.id,
+      dedupeKey: `premium_locked:${settlement.id}`,
+      metadata: {
+        quoteId: quote.id,
+        settlementId: settlement.id,
+        amountEth: premiumLock.amountEth,
+        transactionHash: input.transactionHash ?? null,
+      },
+    });
 
     return {
       payment,
@@ -430,164 +437,320 @@ export class InsuranceRequestService {
     };
   }
 
-  async releaseLockedPremium(input: {
+  async lockLatestQuoteCapital(input: {
     requestId: number;
-    payerAddress: string;
+    underwriterAddress: string;
     transactionHash?: string | null;
   }) {
+    if (!ethers.isAddress(input.underwriterAddress)) {
+      throw new Error("underwriterAddress must be a valid Ethereum address.");
+    }
+
+    const request = await this.requireRequest(input.requestId);
+    const quote = this.requireQuote(request);
+    const settlement = this.requireSettlement(request);
+    await this.ensureCommercialQuoteUsable(request, quote);
+    await this.ensureSettlementUsable(request, settlement);
+
+    if (!request.latestPremiumPayment || !isLocked(request.latestPremiumPayment.status)) {
+      throw new Error("Premium must be locked before an underwriter can lock capital.");
+    }
+
+    const quoteLock = await this.insuranceClient.getQuoteLock(settlement.id);
+    if (quoteLock.state !== 1) {
+      throw new Error("Settlement capital is not locked on-chain.");
+    }
+    if (quoteLock.underwriterAddress.toLowerCase() !== input.underwriterAddress.toLowerCase()) {
+      throw new Error("The on-chain capital lock belongs to another underwriter.");
+    }
+    if (quoteLock.amountWei !== BigInt(settlement.payoutCapWei)) {
+      throw new Error("The locked on-chain capital does not match the settlement terms.");
+    }
+
+    const lockedAmountEth = ethers.formatEther(quoteLock.amountWei);
+    await this.quoteRepository.updateCapitalLock({
+      id: quote.id,
+      underwriterAddress: input.underwriterAddress,
+      status: "open",
+      lockedAmountEth,
+      capitalLockTxHash: input.transactionHash ?? null,
+    });
+    await this.capitalReservationRepository.create({
+      requestId: request.id,
+      quoteId: quote.id,
+      settlementId: settlement.id,
+      policyId: null,
+      reservedAmountEur: quote.payoutCapEur,
+      reservedAmountEth: lockedAmountEth,
+      status: "settlement_locked",
+    });
+    await this.settlementRepository.updateStatus({
+      id: settlement.id,
+      status: "ready_for_activation",
+      underwriterAddress: input.underwriterAddress,
+    });
+    await this.requestRepository.updateStatus(
+      request.id,
+      deriveRequestStatus({ settlementPrepared: true, premiumLocked: true, capitalLocked: true })
+    );
+
+    await this.notify([request.farmerAddress, input.underwriterAddress], {
+      type: "capital_locked",
+      title: "Capital blocat",
+      message: `Un underwriter a blocat capitalul pentru cererea #${request.id}. Polita este gata de activare.`,
+      entityType: "insurance_request",
+      entityId: request.id,
+      dedupeKey: `capital_locked:${settlement.id}`,
+      metadata: {
+        quoteId: quote.id,
+        settlementId: settlement.id,
+        underwriterAddress: input.underwriterAddress,
+        amountEth: lockedAmountEth,
+        transactionHash: input.transactionHash ?? null,
+      },
+    });
+
+    return this.requestRepository.getByIdWithLatestQuote(request.id);
+  }
+
+  async releaseLockedPremium(input: { requestId: number; payerAddress: string; transactionHash?: string | null }) {
     if (!ethers.isAddress(input.payerAddress)) {
       throw new Error("payerAddress must be a valid Ethereum address.");
     }
 
-    const request = await this.requestRepository.getByIdWithLatestQuote(input.requestId);
-    if (!request) {
-      throw new Error("Insurance request not found.");
-    }
-
-    if (!request.latestQuote) {
-      throw new Error("Insurance request does not have a generated quote.");
-    }
-
+    const request = await this.requireRequest(input.requestId);
+    const settlement = this.requireSettlement(request);
     if (request.farmerAddress.toLowerCase() !== input.payerAddress.toLowerCase()) {
       throw new Error("Only the farmer attached to the request can release the premium.");
     }
 
-    const premiumLock = await this.insuranceClient.getPremiumLock(request.latestQuote.id);
+    const premiumLock = await this.insuranceClient.getPremiumLock(settlement.id);
     if (premiumLock.state !== 3) {
       throw new Error("Premium has not been released on-chain.");
     }
-
     if (premiumLock.farmerAddress.toLowerCase() !== input.payerAddress.toLowerCase()) {
       throw new Error("The released premium lock belongs to another farmer.");
     }
 
-    await this.premiumPaymentRepository.updateLatestByQuoteId({
-      quoteId: request.latestQuote.id,
+    await this.premiumPaymentRepository.updateLatestBySettlementId({
+      settlementId: settlement.id,
       status: "released",
       transactionHash: input.transactionHash ?? null,
       amountEth: premiumLock.amountEth,
       asset: "ETH_ESCROW",
     });
-
-    await this.requestRepository.updateStatus(
-      request.id,
-      deriveRequestStatus({
-        premiumLocked: false,
-        capitalLocked: hasLockedCapital(request.latestQuote.status),
-      })
-    );
+    await this.settlementRepository.updateStatus({ id: settlement.id, status: "prepared" });
+    await this.requestRepository.updateStatus(request.id, "awaiting_farmer_lock");
 
     return this.requestRepository.getByIdWithLatestQuote(request.id);
   }
 
-  async activatePolicyFromQuote(input: {
-    requestId: number;
-    thresholdScore?: number;
-    emergencyRain24h?: number;
-  }) {
-    const request = await this.requestRepository.getByIdWithLatestQuote(input.requestId);
-    if (!request) {
-      throw new Error("Insurance request not found.");
+  async releaseLockedQuoteCapital(input: { requestId: number; underwriterAddress: string }) {
+    if (!ethers.isAddress(input.underwriterAddress)) {
+      throw new Error("underwriterAddress must be a valid Ethereum address.");
     }
 
-    if (!request.latestQuote) {
-      throw new Error("Insurance request does not have a generated quote.");
+    const request = await this.requireRequest(input.requestId);
+    const quote = this.requireQuote(request);
+    const settlement = this.requireSettlement(request);
+    const quoteLock = await this.insuranceClient.getQuoteLock(settlement.id);
+    if (quoteLock.state !== 3) {
+      throw new Error("Capital has not been released on-chain.");
     }
+    if (quoteLock.underwriterAddress.toLowerCase() !== input.underwriterAddress.toLowerCase()) {
+      throw new Error("The released capital lock belongs to another underwriter.");
+    }
+
+    await this.quoteRepository.updateCapitalLock({
+      id: quote.id,
+      underwriterAddress: "system",
+      status: "open",
+      lockedAmountEth: null,
+      capitalLockTxHash: null,
+    });
+    await this.capitalReservationRepository.updateStatusBySettlementId({
+      settlementId: settlement.id,
+      status: "released",
+    });
+    await this.settlementRepository.updateStatus({ id: settlement.id, status: "premium_locked" });
+    await this.requestRepository.updateStatus(request.id, "awaiting_underwriter");
+
+    return this.requestRepository.getByIdWithLatestQuote(request.id);
+  }
+
+  async activatePolicyFromQuote(input: { requestId: number }) {
+    const request = await this.requireRequest(input.requestId);
+    const quote = this.requireQuote(request);
+    const settlement = this.requireSettlement(request);
+    await this.ensureCommercialQuoteUsable(request, quote);
+    await this.ensureSettlementUsable(request, settlement);
 
     if (request.status !== "ready_for_activation") {
       throw new Error("Policy can be activated only after premium lock and capital lock.");
     }
-
-    if (request.latestQuote.status !== "locked") {
-      throw new Error("Only locked quotes can be converted into policies.");
-    }
-
-    if (!request.latestPremiumPayment || request.latestPremiumPayment.status !== "locked") {
+    if (!request.latestPremiumPayment || !isLocked(request.latestPremiumPayment.status)) {
       throw new Error("Premium must be locked before activating the policy.");
     }
-
-    if (
-      !request.latestReservation ||
-      request.latestReservation.status !== "quote_locked" ||
-      request.latestReservation.reservedAmountEth === null
-    ) {
+    if (!request.latestReservation || request.latestReservation.status !== "settlement_locked") {
       throw new Error("The request does not have locked capital ready for activation.");
     }
 
-    const premiumLock = await this.insuranceClient.getPremiumLock(request.latestQuote.id);
-    if (premiumLock.state !== 1) {
-      throw new Error("Premium is not locked on-chain.");
+    const premiumLock = await this.insuranceClient.getPremiumLock(settlement.id);
+    const quoteLock = await this.insuranceClient.getQuoteLock(settlement.id);
+    if (premiumLock.state !== 1 || quoteLock.state !== 1) {
+      throw new Error("Settlement locks are not active on-chain.");
     }
 
     const contract = await this.contractService.createContractFromQuote({
-      quoteId: request.latestQuote.id,
+      quoteId: settlement.id,
       userAddress: request.farmerAddress,
       insuranceRequestId: request.id,
-      insuranceQuoteId: request.latestQuote.id,
+      insuranceQuoteId: quote.id,
       locationId: request.locationId,
       cropType: request.cropType,
-      thresholdScore: input.thresholdScore ?? 8,
-      emergencyRain24h: input.emergencyRain24h ?? 80,
+      thresholdScore: quote.triggerThresholdScore,
+      emergencyRain24h: quote.triggerEmergencyRain24h,
       startTime: request.coverageStart.toISOString(),
       endTime: request.coverageEnd.toISOString(),
     });
 
     const reservation = await this.capitalReservationRepository.updateForPolicy({
-      quoteId: request.latestQuote.id,
+      settlementId: settlement.id,
       policyId: contract.contractId,
       status: "policy_reserved",
     });
-
-    await this.quoteRepository.updateStatus(request.latestQuote.id, "converted_to_policy");
-    await this.premiumPaymentRepository.updateLatestByQuoteId({
-      quoteId: request.latestQuote.id,
+    await this.quoteRepository.updateStatus(quote.id, "converted_to_policy");
+    await this.settlementRepository.updateStatus({ id: settlement.id, status: "converted" });
+    await this.premiumPaymentRepository.updateLatestBySettlementId({
+      settlementId: settlement.id,
       status: "converted_to_policy",
       amountEth: premiumLock.amountEth,
       asset: "ETH_ESCROW",
     });
     await this.requestRepository.updateStatus(request.id, "activated");
 
+    await this.notify([request.farmerAddress, quoteLock.underwriterAddress], {
+      type: "policy_activated",
+      title: "Polita activata",
+      message: `Cererea #${request.id} a fost activata ca polita #${contract.contractId}.`,
+      entityType: "policy",
+      entityId: contract.contractId,
+      dedupeKey: `policy_activated:${contract.contractId}`,
+      metadata: {
+        requestId: request.id,
+        quoteId: quote.id,
+        settlementId: settlement.id,
+        policyId: contract.contractId,
+        transactionHash: contract.transactionHash,
+      },
+    });
+
     return {
       contract,
       reservation,
-      request: await this.enrichRequestWithLivePricing(
-        await this.requestRepository.getByIdWithLatestQuote(request.id)
-      ),
+      request: await this.requestRepository.getByIdWithLatestQuote(request.id),
     };
   }
 
-  private async enrichRequestWithLivePricing<
-    T extends { latestQuote: { payoutCapEur: number; premiumAmountEur: number } | null } | null
-  >(
-    request: T
-  ): Promise<T> {
-    if (!request?.latestQuote) {
-      return request;
+  private async notify(
+    recipients: string[],
+    notification: {
+      type: string;
+      title: string;
+      message: string;
+      entityType: string;
+      entityId?: number | null;
+      dedupeKey?: string | null;
+      metadata?: Record<string, unknown>;
     }
-
-    return {
-      ...request,
-      latestQuote: await this.enrichQuoteWithLivePricing(request.latestQuote),
-    };
+  ) {
+    const uniqueRecipients = [...new Set(recipients.map((recipient) => recipient.toLowerCase()))];
+    try {
+      await this.notificationRepository.createMany(
+        uniqueRecipients.map((recipientAddress) => ({
+          recipientAddress,
+          ...notification,
+        }))
+      );
+    } catch (error) {
+      console.warn("Unable to create notification", error);
+    }
   }
 
-  private async enrichQuoteWithLivePricing<T extends { payoutCapEur: number; premiumAmountEur: number }>(
-    quote: T
-  ): Promise<T & { livePricing: Awaited<ReturnType<EthMarketDataService["getLiveEthPricing"]>> | null }> {
-    try {
-      const livePricing = await this.ethMarketDataService.getLiveEthPricing({
-        payoutCapEur: quote.payoutCapEur,
-        premiumAmountEur: quote.premiumAmountEur,
+  private async requireRequest(requestId: number) {
+    const request = await this.requestRepository.getByIdWithLatestQuote(requestId);
+    if (!request) {
+      throw new Error("Insurance request not found.");
+    }
+    return request;
+  }
+
+  private requireQuote(request: InsuranceRequestDetails) {
+    if (!request.latestQuote) {
+      throw new Error("Insurance request does not have a generated quote.");
+    }
+    return request.latestQuote;
+  }
+
+  private requireSettlement(request: InsuranceRequestDetails) {
+    if (!request.latestSettlement) {
+      throw new Error("Prepare a settlement session before locking funds.");
+    }
+    return request.latestSettlement;
+  }
+
+  private async ensureCommercialQuoteUsable(
+    request: InsuranceRequestDetails,
+    quote: InsuranceQuote
+  ) {
+    if (quote.expiresAt.getTime() <= Date.now()) {
+      if (quote.status === "open") {
+        await this.quoteRepository.updateStatus(quote.id, "expired");
+      }
+      await this.notify([request.farmerAddress], {
+        type: "quote_expired",
+        title: "Oferta a expirat",
+        message: `Oferta pentru cererea #${request.id} a expirat si trebuie recalculata inainte de continuarea fluxului.`,
+        entityType: "insurance_request",
+        entityId: request.id,
+        dedupeKey: `quote_expired:${quote.id}`,
+        metadata: {
+          quoteId: quote.id,
+          expiredAt: quote.expiresAt.toISOString(),
+        },
       });
-      return {
-        ...quote,
-        livePricing,
-      };
-    } catch {
-      return {
-        ...quote,
-        livePricing: null,
-      };
+      throw new Error("Commercial quote has expired. Generate a new quote in EUR.");
+    }
+    if (quote.status !== "open") {
+      throw new Error("Commercial quote is not available for settlement.");
+    }
+  }
+
+  private async ensureSettlementUsable(
+    request: InsuranceRequestDetails,
+    settlement: QuoteSettlement
+  ) {
+    if (!settlementIsOpen(settlement.status)) {
+      throw new Error("Settlement session is not active.");
+    }
+    if (settlement.status === "prepared" && settlement.expiresAt.getTime() <= Date.now()) {
+      await this.settlementRepository.updateStatus({ id: settlement.id, status: "expired" });
+      if (!isLocked(request.latestPremiumPayment?.status) && !isLocked(request.latestReservation?.status)) {
+        await this.requestRepository.updateStatus(request.id, "quoted");
+      }
+      await this.notify([request.farmerAddress], {
+        type: "settlement_expired",
+        title: "Settlement ETH expirat",
+        message: `Settlement-ul ETH pentru cererea #${request.id} a expirat. Pregateste un settlement nou la cursul curent.`,
+        entityType: "insurance_request",
+        entityId: request.id,
+        dedupeKey: `settlement_expired:${settlement.id}`,
+        metadata: {
+          settlementId: settlement.id,
+          expiresAt: settlement.expiresAt.toISOString(),
+        },
+      });
+      throw new Error("Settlement session has expired. Refresh ETH settlement terms.");
     }
   }
 }

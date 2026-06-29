@@ -2,6 +2,7 @@ import express, { NextFunction, Request, Response } from "express";
 import { createContractRouter } from "./routes/contractRoutes";
 import { createInsuranceRequestRouter } from "./routes/insuranceRequestRoutes";
 import { createLocationRouter } from "./routes/locationRoutes";
+import { createNotificationRouter } from "./routes/notificationRoutes";
 import { createOracleRouter } from "./routes/oracleRoutes";
 import { createPayoutRouter } from "./routes/payoutRoutes";
 import { createRiskRouter } from "./routes/riskRoutes";
@@ -58,6 +59,7 @@ export const createApp = () => {
   app.use("/location", createLocationRouter(locationService));
   app.use("/insurance-request", createInsuranceRequestRouter(insuranceRequestService));
   app.use("/contract", createContractRouter(contractService));
+  app.use("/notifications", createNotificationRouter());
   app.use("/payout", createPayoutRouter(payoutAdminService));
 
   app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {

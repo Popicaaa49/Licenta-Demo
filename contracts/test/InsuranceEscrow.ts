@@ -56,7 +56,7 @@ describe("InsuranceEscrow", function () {
 
     await expect(tx)
       .to.emit(insurance, "PolicyPaidOut")
-      .withArgs(0, farmer.address, payoutAmount, 8, 50);
+      .withArgs(0, farmer.address, ethers.ZeroAddress, payoutAmount, 8, 50);
 
     const policy = await insurance.getPolicy(0);
     expect(policy.state).to.equal(1);
@@ -124,5 +124,137 @@ describe("InsuranceEscrow", function () {
     const policy = await insurance.getPolicy(0);
     expect(policy.state).to.equal(2);
     expect(await insurance.lockedReserve()).to.equal(0);
+  });
+
+  async function registeredQuoteFixture() {
+    const [owner, oracle, farmer, underwriter, outsider] = await ethers.getSigners();
+    const InsuranceEscrow = await ethers.getContractFactory("InsuranceEscrow");
+    const insurance = await InsuranceEscrow.connect(owner).deploy(oracle.address);
+    await insurance.waitForDeployment();
+
+    const now = await time.latest();
+    const quoteId = 101n;
+    const premiumAmount = ethers.parseEther("0.1");
+    const payoutAmount = ethers.parseEther("1");
+    const startTime = BigInt(now + 60);
+    const endTime = BigInt(now + 7 * 24 * 60 * 60);
+    const expiresAt = BigInt(now + 30 * 60);
+
+    await insurance.connect(underwriter).fundUnderwriterCapital({ value: ethers.parseEther("2") });
+    await insurance.connect(owner).registerQuote(
+      quoteId,
+      farmer.address,
+      "RO-TM-001",
+      "wheat",
+      7,
+      55,
+      premiumAmount,
+      payoutAmount,
+      startTime,
+      endTime,
+      expiresAt
+    );
+
+    return {
+      insurance,
+      owner,
+      oracle,
+      farmer,
+      underwriter,
+      outsider,
+      quoteId,
+      premiumAmount,
+      payoutAmount,
+      startTime,
+      endTime,
+      expiresAt,
+    };
+  }
+
+  it("enforces the registered quote amounts and creates the policy from immutable terms", async function () {
+    const {
+      insurance,
+      owner,
+      farmer,
+      underwriter,
+      outsider,
+      quoteId,
+      premiumAmount,
+      payoutAmount,
+      startTime,
+      endTime,
+    } = await loadFixture(registeredQuoteFixture);
+
+    await expect(
+      insurance.connect(outsider).lockPremiumForQuote(quoteId, { value: premiumAmount })
+    ).to.be.revertedWithCustomError(insurance, "QuoteFarmerMismatch");
+
+    await expect(
+      insurance.connect(farmer).lockPremiumForQuote(quoteId, { value: premiumAmount - 1n })
+    ).to.be.revertedWithCustomError(insurance, "QuotePremiumAmountMismatch");
+
+    await insurance.connect(farmer).lockPremiumForQuote(quoteId, { value: premiumAmount });
+
+    await expect(
+      insurance.connect(underwriter).lockCapitalForQuote(quoteId, payoutAmount - 1n)
+    ).to.be.revertedWithCustomError(insurance, "QuoteCapitalAmountMismatch");
+
+    await insurance.connect(underwriter).lockCapitalForQuote(quoteId, payoutAmount);
+
+    await expect(insurance.connect(owner).createPolicyFromQuote(quoteId))
+      .to.emit(insurance, "PolicyCreated")
+      .withArgs(
+        0,
+        farmer.address,
+        underwriter.address,
+        "RO-TM-001",
+        "wheat",
+        7,
+        55,
+        payoutAmount,
+        startTime,
+        endTime
+      );
+
+    const policy = await insurance.getPolicy(0);
+    expect(policy.thresholdScore).to.equal(7);
+    expect(policy.emergencyRain24h).to.equal(55);
+    expect(policy.payoutAmount).to.equal(payoutAmount);
+    expect(policy.premiumAmount).to.equal(premiumAmount);
+  });
+
+  it("rejects locks for an expired quote", async function () {
+    const { insurance, farmer, quoteId, premiumAmount, expiresAt } = await loadFixture(
+      registeredQuoteFixture
+    );
+
+    await time.increaseTo(Number(expiresAt) + 1);
+    await expect(
+      insurance.connect(farmer).lockPremiumForQuote(quoteId, { value: premiumAmount })
+    ).to.be.revertedWithCustomError(insurance, "QuoteExpired");
+  });
+
+  it("allows capital lock and activation after quote expiry when premium was already locked", async function () {
+    const {
+      insurance,
+      owner,
+      farmer,
+      underwriter,
+      quoteId,
+      premiumAmount,
+      payoutAmount,
+      expiresAt,
+    } = await loadFixture(registeredQuoteFixture);
+
+    await insurance.connect(farmer).lockPremiumForQuote(quoteId, { value: premiumAmount });
+    await time.increaseTo(Number(expiresAt) + 1);
+
+    await expect(insurance.connect(underwriter).lockCapitalForQuote(quoteId, payoutAmount))
+      .to.emit(insurance, "QuoteCapitalLocked")
+      .withArgs(quoteId, underwriter.address, payoutAmount);
+
+    await expect(insurance.connect(owner).createPolicyFromQuote(quoteId))
+      .to.emit(insurance, "QuoteTermsConverted")
+      .withArgs(quoteId, 0);
   });
 });
